@@ -1,0 +1,12 @@
+services:
+  media-sync-manager:
+    build: .
+    image: ghcr.io/andyattebery/media-sync-manager:latest
+    restart: unless-stopped
+    volumes:
+      - /etc/media-sync-manager/config.yaml:/etc/media-sync-manager/config.yaml:ro
+      # media (read) + Tdarr input (hardlink target) MUST be ONE shared-filesystem mount,
+      # else os.link() fails EXDEV. Mount the common parent, not two separate volumes:
+      - /mnt/pool:/mnt/pool
+      # per-device SMB output folders (glue reads to diff, deletes orphans) - may be separate fs:
+      - /mnt/smb/togo:/mnt/smb/togo

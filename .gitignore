@@ -1,0 +1,20 @@
+# Python build / install artifacts
+*.egg-info/
+__pycache__/
+*.py[cod]
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local secrets / config (never commit real Jellyfin/Tdarr credentials)
+config.yaml
+.env

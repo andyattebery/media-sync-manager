@@ -1,0 +1,43 @@
+poll_interval_seconds: 45
+genre_cache_ttl_seconds: 900
+
+jellyfin:
+  url: http://jellyfin.example.com:8096
+  api_key: "${JELLYFIN_API_KEY}"      # env-expanded; commit-safe YAML
+  user_id: "a1b2c3..."                # REQUIRED by the playlist-items endpoint
+
+tdarr:
+  url: http://tdarr.example.com:8265
+  username: "${TDARR_USER}"           # omit username+password if the instance has auth disabled
+  password: "${TDARR_PASS}"
+  request_timeout_seconds: 20
+  submit_timeout_seconds: 21600       # 6h: input link present this long with no output -> status flags it
+  # scan_mode is auto-detected by `doctor` (scanFolderWatcher vs scanFindNew), not set here
+
+media_root: /mnt/pool/media           # glue-view root; defines source_rel + relkey
+path_maps:                            # jellyfin-view -> glue-view (longest prefix wins)
+  - { from: /data/media, to: /mnt/pool/media }
+tdarr_path_maps:                      # glue-view -> tdarr-view (omit if co-located)
+  - { from: /mnt/pool/tdarr, to: /mnt/tdarr }
+
+profiles:                             # classification (match lists) + path segment for flow branching
+  standard:  { segment: standard }                 # DEFAULT / fail-safe; no match needed
+  animation:
+    segment: animation
+    match:
+      genres: [Animation, Anime, Children, Cartoon, Family]
+      tags: [anime, kids]
+default_profile: standard
+profile_priority: [animation, standard]   # first match wins; standard last = fallthrough
+
+devices:
+  - name: iphone
+    playlist_name: "Travel - Phone"    # matched client-side by Name
+    output_dir: /mnt/smb/togo/iphone  # Tdarr flow writes here; glue reads it for done/orphan diff
+    library_id: lib_iphone            # the device's Tdarr library (shared flow); glue writes
+    input_dir: /mnt/pool/tdarr/in/iphone   #   <input_dir>/<profile.segment>/<source_rel>, scans library_id
+  - name: kids-ipad
+    playlist_name: "Togo - Kids iPad"
+    output_dir: /mnt/smb/togo/kids
+    library_id: lib_kids
+    input_dir: /mnt/pool/tdarr/in/kids

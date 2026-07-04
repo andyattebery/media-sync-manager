@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "media-sync-manager"
+version = "0.1.0"
+description = "Sync Jellyfin playlists to per-device transcoded copies via Tdarr (media-sync-manager)"
+requires-python = ">=3.12"
+dependencies = [
+    "requests",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "responses",
+]
+
+[project.scripts]
+media-sync-manager = "media_sync_manager.cli:main"
+
+[tool.setuptools]
+packages = ["media_sync_manager"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
