@@ -6,9 +6,6 @@ Client/DeviceId fields). The playlist-items endpoint requires `userId` even with
 
 from __future__ import annotations
 
-import time
-from typing import Callable
-
 import requests
 
 from . import log
@@ -17,7 +14,7 @@ from .models import JellyfinConfig, MediaItem, MediaSource
 
 _log = log.get("jellyfin")
 
-_ITEM_FIELDS = "Path,MediaSources,SeriesId,SeasonId,Genres,Tags,OfficialRating"
+_ITEM_FIELDS = "Path,MediaSources"
 
 
 def _parse_item(raw: dict) -> MediaItem:
@@ -32,10 +29,6 @@ def _parse_item(raw: dict) -> MediaItem:
         id=str(raw.get("Id", "")),
         name=str(raw.get("Name", "")),
         type=str(raw.get("Type", "")),
-        series_id=raw.get("SeriesId"),
-        genres=tuple(raw.get("Genres") or ()),
-        tags=tuple(raw.get("Tags") or ()),
-        official_rating=raw.get("OfficialRating"),
         media_sources=sources,
     )
 
@@ -46,19 +39,14 @@ class JellyfinClient:
         config: JellyfinConfig,
         *,
         timeout: int = 20,
-        genre_cache_ttl: int = 900,
         session: requests.Session | None = None,
-        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._cfg = config
         self._timeout = timeout
-        self._ttl = genre_cache_ttl
-        self._clock = clock
         self._session = session or requests.Session()
         self._session.headers.update(
             {"X-Emby-Token": config.api_key, "Accept": "application/json"}
         )
-        self._genre_cache: dict[str, tuple[float, list[str]]] = {}
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = f"{self._cfg.url}{path}"
@@ -94,17 +82,3 @@ class JellyfinClient:
             {"userId": self._cfg.user_id, "fields": _ITEM_FIELDS},
         )
         return [_parse_item(it) for it in (data.get("Items") or [])]
-
-    def series_genres(self, series_id: str) -> list[str]:
-        """Genres of a series, memoised with TTL across cycles."""
-        now = self._clock()
-        cached = self._genre_cache.get(series_id)
-        if cached is not None and now - cached[0] < self._ttl:
-            return cached[1]
-        data = self._get(
-            f"/Items/{series_id}",
-            {"userId": self._cfg.user_id, "fields": "Genres,Tags,OfficialRating"},
-        )
-        genres = list(data.get("Genres") or [])
-        self._genre_cache[series_id] = (now, genres)
-        return genres

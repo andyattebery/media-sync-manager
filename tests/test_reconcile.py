@@ -14,176 +14,184 @@ REL = "TV/Show/S01/ep.mkv"
 RELKEY = "TV/Show/S01/ep"
 
 
-def _jf(items, series=None, find_error=None):
-    return FakeJellyfinClient(
-        playlists={"PL": items}, series_genres=series or {}, find_error=find_error
-    )
+def _jf(playlists):
+    return FakeJellyfinClient(playlists=playlists)
 
 
-def _write_output(device, rel: str) -> Path:
-    p = Path(device.output_dir) / rel
+def _write_output(target, seg_rel: str) -> Path:
+    """Write an output file at output_dir/<seg_rel>.mkv, return its path."""
+    p = Path(target.output_dir) / f"{seg_rel}.mkv"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(b"out")
     return p
 
 
-# 1 -------------------------------------------------------------------------
-def test_cold_add_hardlink_path_and_single_scan(make_device, make_config, write_source, make_episode):
-    device = make_device()
-    config = make_config([device])
-    src = write_source(REL)
-    jf = _jf([make_episode(src, genres=["Animation"])])
+def _only(plans):
+    assert len(plans) == 1
+    return plans[0]
 
-    plan = reconcile.plan_device(device, config, jf)
+
+# 1 cold add ----------------------------------------------------------------
+def test_cold_add(make_target, make_config, write_source, make_episode):
+    t = make_target(playlist="2D Animation", segment="animation")
+    config = make_config([t])
+    src = write_source(REL)
+    plan = _only(reconcile.plan_all(config, _jf({"2D Animation": [make_episode(src)]})))
 
     assert plan.error is None
     assert len(plan.submits) == 1
     s = plan.submits[0]
-    assert s.profile == "animation"
+    assert s.segment == "animation"
+    assert s.playlist == "2D Animation"
     assert s.relkey == RELKEY
-    assert s.input_path == posixpath.join(device.input_dir, "animation", REL)
-    assert s.tdarr_path == s.input_path  # no tdarr_path_maps
+    assert s.match_key == f"animation/{RELKEY}"
+    assert s.input_path == posixpath.join(t.input_dir, "animation", REL)
+    assert s.tdarr_path == s.input_path
     assert s.library_id == "lib_iphone"
     assert plan.deletes == ()
 
 
-# 2 -------------------------------------------------------------------------
-def test_already_present_with_segment_prefix_no_submit(make_device, make_config, write_source, make_episode):
-    device = make_device()
-    config = make_config([device])
+# 2 already present ---------------------------------------------------------
+def test_already_present_no_submit(make_target, make_config, write_source, make_episode):
+    t = make_target(segment="standard")
+    config = make_config([t])
     src = write_source(REL)
-    _write_output(device, f"standard/{RELKEY}.mkv")  # flow prepended a <segment>/
-    jf = _jf([make_episode(src)])
-
-    plan = reconcile.plan_device(device, config, jf)
-
+    _write_output(t, f"standard/{RELKEY}")
+    plan = _only(reconcile.plan_all(config, _jf({"PL": [make_episode(src)]})))
     assert plan.submits == ()
-    assert plan.deletes == ()  # the present output is claimed by the desired item
+    assert plan.deletes == ()
 
 
-# 3 -------------------------------------------------------------------------
-def test_in_flight_no_double_submit(make_device, make_config, write_source, make_episode):
-    device = make_device()
-    config = make_config([device])
+# 3 in-flight ---------------------------------------------------------------
+def test_in_flight_no_double_submit(make_target, make_config, write_source, make_episode):
+    t = make_target(segment="standard")
+    config = make_config([t])
     src = write_source(REL)
-    # an input hardlink already exists from a prior submit
-    input_path = Path(device.input_dir) / "standard" / REL
+    input_path = Path(t.input_dir) / "standard" / REL
     input_path.parent.mkdir(parents=True, exist_ok=True)
     os.link(src, input_path)
-    jf = _jf([make_episode(src)])
-
-    plan = reconcile.plan_device(device, config, jf)
-
+    plan = _only(reconcile.plan_all(config, _jf({"PL": [make_episode(src)]})))
     assert plan.submits == ()
     assert any("in-flight" in s for s in plan.skipped)
 
 
-# 4 -------------------------------------------------------------------------
-def test_restart_safety_input_link_intact_no_resubmit(make_device, make_config, write_source, make_episode):
-    device = make_device()
-    config = make_config([device])
+# 4 restart safety ----------------------------------------------------------
+def test_restart_safety(make_target, make_config, write_source, make_episode):
+    t = make_target(segment="standard")
+    config = make_config([t])
     src = write_source(REL)
-    input_path = Path(device.input_dir) / "standard" / REL
+    input_path = Path(t.input_dir) / "standard" / REL
     input_path.parent.mkdir(parents=True, exist_ok=True)
     os.link(src, input_path)
-    jf = _jf([make_episode(src)])
-
-    # a "fresh process" is just a brand-new plan against the same on-disk state
-    plan = reconcile.plan_device(device, config, jf)
+    plan = _only(reconcile.plan_all(config, _jf({"PL": [make_episode(src)]})))
     assert plan.submits == ()
 
 
-# 5 -------------------------------------------------------------------------
-def test_output_appears_then_satisfied(make_device, make_config, write_source, make_episode):
-    device = make_device()
-    config = make_config([device])
+# 5 output appears ----------------------------------------------------------
+def test_output_appears_then_satisfied(make_target, make_config, write_source, make_episode):
+    t = make_target(segment="standard")
+    config = make_config([t])
     src = write_source(REL)
-    jf = _jf([make_episode(src)])
-
-    first = reconcile.plan_device(device, config, jf)
-    assert len(first.submits) == 1
-
-    _write_output(device, f"standard/{RELKEY}.mkv")
-    second = reconcile.plan_device(device, config, jf)
-    assert second.submits == ()
+    jf = _jf({"PL": [make_episode(src)]})
+    assert len(_only(reconcile.plan_all(config, jf)).submits) == 1
+    _write_output(t, f"standard/{RELKEY}")
+    assert _only(reconcile.plan_all(config, jf)).submits == ()
 
 
-# 6 -------------------------------------------------------------------------
-def test_orphan_deletes_only_device_file(make_device, make_config, write_source, make_episode):
-    device = make_device()
-    config = make_config([device])
+# 6 orphan removal ----------------------------------------------------------
+def test_orphan_deletes_only_device_file(make_target, make_config, write_source, make_episode):
+    t = make_target(segment="standard")
+    config = make_config([t])
     src = write_source(REL)
-    _write_output(device, f"standard/{RELKEY}.mkv")  # present + desired
-    orphan = _write_output(device, "standard/Old/S01/gone.mkv")  # present, not desired
-    jf = _jf([make_episode(src)])
-
-    plan = reconcile.plan_device(device, config, jf)
-
+    _write_output(t, f"standard/{RELKEY}")
+    orphan = _write_output(t, "standard/Old/gone")
+    plan = _only(reconcile.plan_all(config, _jf({"PL": [make_episode(src)]})))
     assert [d.path for d in plan.deletes] == [str(orphan)]
     assert plan.submits == ()
-    assert Path(src).exists()  # original untouched
+    assert Path(src).exists()
 
 
-# 7 -------------------------------------------------------------------------
-def test_transient_lookup_failure_does_not_purge(make_device, make_config):
-    device = make_device()
-    config = make_config([device])
-    _write_output(device, "standard/Anything/ep.mkv")  # would be an orphan if we diffed
-    jf = _jf([], find_error=TransientError("jellyfin down"))
-
-    plan = reconcile.plan_device(device, config, jf)
-
+# 7 transient safety --------------------------------------------------------
+def test_transient_lookup_failure_does_not_purge(make_target, make_config):
+    t = make_target(segment="standard")
+    config = make_config([t])
+    _write_output(t, "standard/Anything/ep")
+    jf = FakeJellyfinClient(find_error=TransientError("jellyfin down"))
+    plan = _only(reconcile.plan_all(config, jf))
     assert plan.error is not None
     assert plan.deletes == ()
     assert plan.submits == ()
 
 
-# 8 -------------------------------------------------------------------------
-def test_empty_playlist_removes_orphans(make_device, make_config):
-    device = make_device()
-    config = make_config([device])
-    orphan = _write_output(device, "standard/Old/ep.mkv")
-    jf = _jf([])  # playlist exists, zero items (success)
-
-    plan = reconcile.plan_device(device, config, jf)
-
+# 8 empty playlist ----------------------------------------------------------
+def test_empty_playlist_removes_orphans(make_target, make_config):
+    t = make_target(segment="standard")
+    config = make_config([t])
+    orphan = _write_output(t, "standard/Old/ep")
+    plan = _only(reconcile.plan_all(config, _jf({"PL": []})))
     assert plan.error is None
     assert [d.path for d in plan.deletes] == [str(orphan)]
 
 
-# 9 -------------------------------------------------------------------------
-def test_fail_safe_routing_missing_genre_to_standard(make_device, make_config, write_source, make_episode):
-    device = make_device()
-    config = make_config([device])
-    src = write_source(REL)
-    # episode has no genres and the series resolver returns nothing -> standard
-    jf = _jf([make_episode(src, series_id="s1", genres=[])], series={"s1": []})
+# 9 segment comes from which playlist (two targets, one shared output) ------
+def test_segment_from_playlist(make_target, make_config, write_source, make_episode):
+    t2d = make_target(playlist="2D", segment="animation", device="iphone")
+    tstd = make_target(playlist="Std", segment="standard", device="iphone")
+    config = make_config([t2d, tstd])
+    a = write_source("TV/A/ep.mkv")
+    b = write_source("TV/B/ep.mkv")
+    plan = _only(
+        reconcile.plan_all(config, _jf({"2D": [make_episode(a)], "Std": [make_episode(b)]}))
+    )
+    by_key = {s.match_key: s for s in plan.submits}
+    assert by_key["animation/TV/A/ep"].segment == "animation"
+    assert by_key["standard/TV/B/ep"].segment == "standard"
 
-    plan = reconcile.plan_device(device, config, jf)
 
-    assert plan.submits[0].profile == "standard"
-    assert plan.submits[0].input_path == posixpath.join(device.input_dir, "standard", REL)
+# 10 shared output_dir: neither target deletes the other's files ------------
+def test_shared_output_no_cross_delete(make_target, make_config, write_source, make_episode):
+    t2d = make_target(playlist="2D", segment="animation", device="iphone")
+    tstd = make_target(playlist="Std", segment="standard", device="iphone")
+    config = make_config([t2d, tstd])
+    a = write_source("TV/A/ep.mkv")
+    b = write_source("TV/B/ep.mkv")
+    _write_output(t2d, "animation/TV/A/ep")
+    _write_output(tstd, "standard/TV/B/ep")
+    plan = _only(
+        reconcile.plan_all(config, _jf({"2D": [make_episode(a)], "Std": [make_episode(b)]}))
+    )
+    assert plan.submits == ()
+    assert plan.deletes == ()  # each output is claimed by its own segment's desired item
 
 
-# 10 ------------------------------------------------------------------------
-def test_item_without_media_source_is_skipped(make_device, make_config, write_source, make_episode):
-    device = make_device()
-    config = make_config([device])
+# 11 re-categorisation: moving an item between playlists re-encodes + retires
+def test_recategorisation(make_target, make_config, write_source, make_episode):
+    t2d = make_target(playlist="2D", segment="animation", device="iphone")
+    tstd = make_target(playlist="Std", segment="standard", device="iphone")
+    config = make_config([t2d, tstd])
+    x = write_source("TV/X/ep.mkv")
+    stale = _write_output(tstd, "standard/TV/X/ep")  # was standard, now moved to 2D
+    plan = _only(reconcile.plan_all(config, _jf({"2D": [make_episode(x)], "Std": []})))
+    assert [s.match_key for s in plan.submits] == ["animation/TV/X/ep"]
+    assert [d.path for d in plan.deletes] == [str(stale)]
+
+
+# 12 no media source --------------------------------------------------------
+def test_item_without_media_source_is_skipped(make_target, make_config, write_source, make_episode):
+    t = make_target(segment="standard")
+    config = make_config([t])
     good = write_source(REL)
     no_source = MediaItem(id="x", name="No Source", type="Episode", media_sources=())
-    jf = _jf([no_source, make_episode(good)])
-
-    plan = reconcile.plan_device(device, config, jf)
-
+    plan = _only(reconcile.plan_all(config, _jf({"PL": [no_source, make_episode(good)]})))
     assert len(plan.submits) == 1
     assert plan.submits[0].relkey == RELKEY
     assert any("no usable media source" in s for s in plan.skipped)
 
 
-# 11 ------------------------------------------------------------------------
-def test_multi_version_picks_largest(make_device, make_config, write_source):
-    device = make_device()
-    config = make_config([device])
+# 13 multi-version ----------------------------------------------------------
+def test_multi_version_picks_largest(make_target, make_config, write_source):
+    t = make_target(segment="standard")
+    config = make_config([t])
     small = write_source("TV/Show/S01/small.mkv")
     big = write_source("TV/Show/S01/big.mkv")
     item = MediaItem(
@@ -192,10 +200,7 @@ def test_multi_version_picks_largest(make_device, make_config, write_source):
         type="Episode",
         media_sources=(MediaSource(path=small, size=100), MediaSource(path=big, size=999)),
     )
-    jf = _jf([item])
-
-    plan = reconcile.plan_device(device, config, jf)
-
+    plan = _only(reconcile.plan_all(config, _jf({"PL": [item]})))
     assert len(plan.submits) == 1
     assert plan.submits[0].source == big
     assert plan.submits[0].relkey == "TV/Show/S01/big"

@@ -11,20 +11,21 @@ RAW = {
     "jellyfin": {"url": "http://jf", "api_key": "k", "user_id": "u"},
     "tdarr": {"url": "http://td"},
     "media_root": "/mnt/pool/media",
-    "profiles": {
-        "standard": {"segment": "standard"},
-        "animation": {"segment": "animation", "match": {"genres": ["Animation"], "tags": ["kids"]}},
-    },
-    "default_profile": "standard",
-    "profile_priority": ["animation", "standard"],
-    "devices": [
+    "targets": [
         {
-            "name": "iphone",
-            "playlist_name": "Travel - Phone",
+            "playlist_name": "2D Animation",
+            "segment": "animation",
             "output_dir": "/out/iphone",
             "library_id": "lib_iphone",
             "input_dir": "/in/iphone",
-        }
+        },
+        {
+            "playlist_name": "Standard",
+            "segment": "standard",
+            "output_dir": "/out/iphone",
+            "library_id": "lib_iphone",
+            "input_dir": "/in/iphone",
+        },
     ],
 }
 
@@ -37,10 +38,10 @@ def _raw(**overrides):
 
 def test_parse_valid():
     cfg = config_mod.parse(_raw())
-    assert cfg.default_profile == "standard"
-    assert cfg.profiles["animation"].match_genres == frozenset({"animation"})
-    assert cfg.profiles["animation"].match_tags == frozenset({"kids"})
-    assert cfg.devices[0].library_id == "lib_iphone"
+    assert len(cfg.targets) == 2
+    assert cfg.targets[0].segment == "animation"
+    assert cfg.targets[0].playlist_name == "2D Animation"
+    assert cfg.targets[1].segment == "standard"
 
 
 def test_env_expansion(tmp_path, monkeypatch):
@@ -51,11 +52,8 @@ def test_env_expansion(tmp_path, monkeypatch):
 jellyfin: {url: "http://jf", api_key: "${JELLYFIN_API_KEY}", user_id: "u"}
 tdarr: {url: "http://td"}
 media_root: /m
-profiles: {standard: {segment: standard}}
-default_profile: standard
-profile_priority: [standard]
-devices:
-  - {name: a, playlist_name: PL, output_dir: /o, library_id: lib, input_dir: /i}
+targets:
+  - {playlist_name: PL, segment: standard, output_dir: /o, library_id: lib, input_dir: /i}
 """
     )
     cfg = config_mod.load(p)
@@ -70,41 +68,35 @@ def test_missing_env_var_raises(tmp_path, monkeypatch):
 jellyfin: {url: "http://jf", api_key: "${NOPE}", user_id: "u"}
 tdarr: {url: "http://td"}
 media_root: /m
-profiles: {standard: {segment: standard}}
-default_profile: standard
-profile_priority: [standard]
-devices:
-  - {name: a, playlist_name: PL, output_dir: /o, library_id: lib, input_dir: /i}
+targets:
+  - {playlist_name: PL, segment: standard, output_dir: /o, library_id: lib, input_dir: /i}
 """
     )
     with pytest.raises(ConfigError):
         config_mod.load(p)
 
 
-def test_default_profile_must_exist():
-    with pytest.raises(ConfigError):
-        config_mod.parse(_raw(default_profile="missing"))
-
-
-def test_device_missing_input_dir_raises():
+def test_target_missing_input_dir_raises():
     bad = _raw()
-    del bad["devices"][0]["input_dir"]
+    del bad["targets"][0]["input_dir"]
     with pytest.raises(ConfigError):
         config_mod.parse(bad)
 
 
-def test_device_missing_library_id_raises():
+def test_target_missing_library_id_raises():
     bad = _raw()
-    del bad["devices"][0]["library_id"]
+    del bad["targets"][0]["library_id"]
     with pytest.raises(ConfigError):
         config_mod.parse(bad)
 
 
-def test_unknown_profile_in_priority_raises():
+def test_target_missing_segment_raises():
+    bad = _raw()
+    del bad["targets"][0]["segment"]
     with pytest.raises(ConfigError):
-        config_mod.parse(_raw(profile_priority=["animation", "ghost"]))
+        config_mod.parse(bad)
 
 
-def test_empty_devices_raises():
+def test_empty_targets_raises():
     with pytest.raises(ConfigError):
-        config_mod.parse(_raw(devices=[]))
+        config_mod.parse(_raw(targets=[]))

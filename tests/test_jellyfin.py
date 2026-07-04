@@ -48,23 +48,11 @@ def test_playlist_items_sends_userid_and_fields_and_parses():
     )
     items = JellyfinClient(CFG).playlist_items("p1")
     assert len(items) == 1
-    assert items[0].series_id == "s1"
+    assert items[0].type == "Episode"
     assert items[0].media_sources[0].path == "/data/x.mkv"
     q = responses.calls[0].request.params
     assert q["userId"] == "u"
     assert "MediaSources" in q["fields"]
-
-
-@responses.activate
-def test_series_genres_memoised_within_ttl():
-    responses.add(
-        responses.GET, "http://jf/Items/s1", json={"Genres": ["Anime", "Action"]}
-    )
-    client = JellyfinClient(CFG, genre_cache_ttl=1000)
-    assert client.series_genres("s1") == ["Anime", "Action"]
-    assert client.series_genres("s1") == ["Anime", "Action"]
-    # only one HTTP call despite two lookups
-    assert len(responses.calls) == 1
 
 
 @responses.activate

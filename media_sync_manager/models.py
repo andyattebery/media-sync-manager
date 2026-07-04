@@ -1,4 +1,8 @@
-"""Immutable data model: config, Jellyfin items, and the reconcile plan."""
+"""Immutable data model: config, Jellyfin items, and the reconcile plan.
+
+The quality flow ("segment") is chosen by which playlist an item is in, not by genre — each config
+target maps one playlist to one segment + output + Tdarr library.
+"""
 
 from __future__ import annotations
 
@@ -18,10 +22,6 @@ class MediaItem:
     id: str
     name: str
     type: str  # "Episode" | "Movie" | ...
-    series_id: str | None = None
-    genres: tuple[str, ...] = ()
-    tags: tuple[str, ...] = ()
-    official_rating: str | None = None
     media_sources: tuple[MediaSource, ...] = ()
 
 
@@ -31,14 +31,6 @@ class MediaItem:
 class PathMap:
     src: str  # "from": how the source system names a path
     dst: str  # "to": how this system names the same bytes
-
-
-@dataclass(frozen=True)
-class Profile:
-    name: str
-    segment: str
-    match_genres: frozenset[str] = frozenset()  # casefolded
-    match_tags: frozenset[str] = frozenset()  # casefolded
 
 
 @dataclass(frozen=True)
@@ -58,9 +50,15 @@ class TdarrConfig:
 
 
 @dataclass(frozen=True)
-class Device:
-    name: str
+class Target:
+    """One playlist -> one quality segment + one device output + one Tdarr library.
+
+    Targets that share an `output_dir` are one device (e.g. its '2D Animation' + 'Standard'
+    playlists); reconcile groups them so neither deletes the other's files.
+    """
+
     playlist_name: str
+    segment: str
     output_dir: str
     library_id: str
     input_dir: str
@@ -71,14 +69,10 @@ class Config:
     jellyfin: JellyfinConfig
     tdarr: TdarrConfig
     media_root: str
-    profiles: dict[str, Profile]
-    default_profile: str
-    profile_priority: tuple[str, ...]
-    devices: tuple[Device, ...]
+    targets: tuple[Target, ...]
     path_maps: tuple[PathMap, ...] = ()
     tdarr_path_maps: tuple[PathMap, ...] = ()
     poll_interval_seconds: int = 45
-    genre_cache_ttl_seconds: int = 900
 
 
 # --- Reconcile plan ----------------------------------------------------------
@@ -87,12 +81,18 @@ class Config:
 class Submit:
     """A new item to push: hardlink the original into the input folder, then scan."""
 
-    relkey: str
+    relkey: str  # source path relative to media_root, minus extension
+    segment: str
+    playlist: str
     source: str  # glue-view path of the original
     input_path: str  # glue-view path of the hardlink to create
     tdarr_path: str  # tdarr-view of input_path, passed to scan-files
     library_id: str
-    profile: str
+
+    @property
+    def match_key(self) -> str:
+        """The output identity: <segment>/<relkey> (the flow prepends the segment folder)."""
+        return f"{self.segment}/{self.relkey}"
 
 
 @dataclass(frozen=True)
@@ -100,16 +100,18 @@ class DeleteOutput:
     """An orphan output to remove from a device folder (never a source/original)."""
 
     path: str  # glue-view path of the file to delete
-    relkey: str
+    match_key: str
 
 
 @dataclass(frozen=True)
-class DevicePlan:
-    device: str
+class GroupPlan:
+    """Reconcile result for one output_dir (all targets that write to it)."""
+
+    output_dir: str
     submits: tuple[Submit, ...] = ()
     deletes: tuple[DeleteOutput, ...] = ()
     skipped: tuple[str, ...] = ()  # human-readable reasons (no source, in-flight, ...)
-    error: str | None = None  # set when the device was skipped wholesale (transient)
+    error: str | None = None  # a target in this group failed to fetch -> deletes suppressed
 
     @property
     def touched(self) -> bool:

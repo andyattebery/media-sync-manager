@@ -1,20 +1,20 @@
-"""The reconciliation brain: compute a DevicePlan from the playlist, the filesystem, and config.
+"""The reconciliation brain: compute a GroupPlan per output_dir from playlists + the filesystem.
 
 Pure planning — it reads state (Jellyfin + the filesystem) and returns the actions to take, but does
-not execute them (sync.py does). This keeps every decision branch unit-testable by asserting the
-returned plan, and makes --dry-run trivial.
+not execute them (sync.py does). Targets that share an `output_dir` are reconciled together so one
+target never treats another's outputs as orphans; matching is segment-aware
+(`<segment>/<relkey>`), so moving an item between playlists re-encodes it and retires the old output.
 """
 
 from __future__ import annotations
 
 import posixpath
+from collections import OrderedDict
 
-from . import fsops, log, paths, profile
+from . import fsops, paths
 from .errors import PathRemapError, TransientError
 from .jellyfin import JellyfinClient
-from .models import Config, Device, DevicePlan, DeleteOutput, MediaItem, Submit
-
-_log = log.get("reconcile")
+from .models import Config, DeleteOutput, GroupPlan, MediaItem, Submit, Target
 
 
 def pick_media_source(item: MediaItem) -> str | None:
@@ -26,81 +26,96 @@ def pick_media_source(item: MediaItem) -> str | None:
     return best.path
 
 
-def _suffix_match(present_rel: str, relkey: str) -> bool:
-    """True when an output path (minus ext) corresponds to a desired relkey.
+def _claims(present_rel: str, match_key: str) -> bool:
+    """True when an output path (minus ext) is the output for `match_key` (= <segment>/<relkey>).
 
-    Exact match, or the present path ends with `/relkey` — the latter absorbs a `<segment>/` (or
-    season) prefix that a Keep-Relative-Path flow prepends. The leading slash prevents partial
-    path-component matches.
+    Exact match, or the present path ends with `/match_key` — the latter absorbs an extra prefix a
+    flow might add above the segment. The segment is part of the key, so a stale output under a
+    different segment does NOT match (re-categorised items get re-encoded, old outputs retired).
     """
-    return present_rel == relkey or present_rel.endswith("/" + relkey)
+    return present_rel == match_key or present_rel.endswith("/" + match_key)
 
 
-def plan_device(device: Device, config: Config, jellyfin: JellyfinClient) -> DevicePlan:
-    """Reconcile one device. On any transient failure, return a plan with `error` set and NO
-    deletes — never purge a device folder because a lookup failed."""
+def plan_all(config: Config, jellyfin: JellyfinClient) -> list[GroupPlan]:
+    """One GroupPlan per distinct output_dir, in first-seen order."""
+    groups: "OrderedDict[str, list[Target]]" = OrderedDict()
+    for target in config.targets:
+        groups.setdefault(target.output_dir, []).append(target)
+    return [_plan_group(out, targets, config, jellyfin) for out, targets in groups.items()]
+
+
+def _plan_group(
+    output_dir: str, targets: list[Target], config: Config, jellyfin: JellyfinClient
+) -> GroupPlan:
+    desired: "OrderedDict[str, tuple[Target, str, str, str]]" = OrderedDict()
+    skipped: list[str] = []
+    incomplete = False  # a target failed to fetch -> we must not delete (its items look orphaned)
+    error: str | None = None
+
+    for target in targets:
+        try:
+            playlist_id = jellyfin.find_playlist(target.playlist_name)
+            items = jellyfin.playlist_items(playlist_id)
+        except TransientError as exc:
+            incomplete = True
+            error = str(exc)
+            skipped.append(f"{target.playlist_name}: {exc}")
+            continue
+        for item in items:
+            jf_path = pick_media_source(item)
+            if not jf_path:
+                skipped.append(f"{target.playlist_name}/{item.name}: no usable media source")
+                continue
+            try:
+                source = paths.to_glue(jf_path, config)
+                srel = paths.source_rel(source, config.media_root)
+            except PathRemapError as exc:
+                skipped.append(f"{target.playlist_name}/{item.name}: {exc}")
+                continue
+            relkey = paths.rel_key(srel)
+            match_key = f"{target.segment}/{relkey}"
+            if match_key not in desired:  # same item in two same-segment playlists -> first wins
+                desired[match_key] = (target, source, srel, relkey)
+
     try:
-        playlist_id = jellyfin.find_playlist(device.playlist_name)
-        items = jellyfin.playlist_items(playlist_id)
+        present = fsops.output_index(output_dir)
     except TransientError as exc:
-        _log.warning("device %s skipped: %s", device.name, exc)
-        return DevicePlan(device=device.name, error=str(exc))
-
-    try:
-        present = fsops.output_index(device.output_dir)
-    except TransientError as exc:
-        _log.warning("device %s skipped: %s", device.name, exc)
-        return DevicePlan(device=device.name, error=str(exc))
-
+        return GroupPlan(output_dir=output_dir, skipped=(*skipped, str(exc)), error=str(exc))
     present_rels = [rel for _full, rel in present]
 
-    desired: dict[str, tuple[object, str, str]] = {}  # relkey -> (profile, source_glue, source_rel)
-    skipped: list[str] = []
-    for item in items:
-        jf_path = pick_media_source(item)
-        if not jf_path:
-            skipped.append(f"{item.name}: no usable media source")
-            continue
-        try:
-            source = paths.to_glue(jf_path, config)
-            srel = paths.source_rel(source, config.media_root)
-        except PathRemapError as exc:
-            skipped.append(f"{item.name}: {exc}")
-            continue
-        prof = profile.classify(item, config, jellyfin.series_genres)
-        relkey = paths.rel_key(srel)
-        desired[relkey] = (prof, source, srel)
-
-    # Additions: desired items with no satisfying output and no in-flight input hardlink.
     submits: list[Submit] = []
-    for relkey, (prof, source, srel) in desired.items():
-        if any(_suffix_match(p, relkey) for p in present_rels):
+    for match_key, (target, source, srel, relkey) in desired.items():
+        if any(_claims(p, match_key) for p in present_rels):
             continue
-        input_path = posixpath.join(device.input_dir, prof.segment, srel)
+        input_path = posixpath.join(target.input_dir, target.segment, srel)
         if fsops.exists(input_path):
-            skipped.append(f"{relkey}: in-flight")
+            skipped.append(f"{match_key}: in-flight")
             continue
         submits.append(
             Submit(
                 relkey=relkey,
+                segment=target.segment,
+                playlist=target.playlist_name,
                 source=source,
                 input_path=input_path,
                 tdarr_path=paths.to_tdarr(input_path, config),
-                library_id=device.library_id,
-                profile=prof.name,
+                library_id=target.library_id,
             )
         )
 
-    # Orphans: present outputs not claimed by any desired item.
-    deletes = tuple(
-        DeleteOutput(path=full, relkey=rel)
-        for full, rel in present
-        if not any(_suffix_match(rel, d) for d in desired)
-    )
+    # Orphans: present outputs claimed by no desired key. Suppressed when the group is incomplete.
+    deletes: tuple[DeleteOutput, ...] = ()
+    if not incomplete:
+        deletes = tuple(
+            DeleteOutput(path=full, match_key=rel)
+            for full, rel in present
+            if not any(_claims(rel, key) for key in desired)
+        )
 
-    return DevicePlan(
-        device=device.name,
+    return GroupPlan(
+        output_dir=output_dir,
         submits=tuple(submits),
         deletes=deletes,
         skipped=tuple(skipped),
+        error=error,
     )

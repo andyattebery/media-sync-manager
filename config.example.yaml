@@ -1,5 +1,4 @@
 poll_interval_seconds: 45
-genre_cache_ttl_seconds: 900
 
 jellyfin:
   url: http://jellyfin.example.com:8096
@@ -20,24 +19,23 @@ path_maps:                            # jellyfin-view -> glue-view (longest pref
 tdarr_path_maps:                      # glue-view -> tdarr-view (omit if co-located)
   - { from: /mnt/pool/tdarr, to: /mnt/tdarr }
 
-profiles:                             # classification (match lists) + path segment for flow branching
-  standard:  { segment: standard }                 # DEFAULT / fail-safe; no match needed
-  animation:
-    segment: animation
-    match:
-      genres: [Animation, Anime, Children, Cartoon, Family]
-      tags: [anime, kids]
-default_profile: standard
-profile_priority: [animation, standard]   # first match wins; standard last = fallthrough
-
-devices:
-  - name: iphone
-    playlist_name: "Travel - Phone"    # matched client-side by Name
+# Each target maps ONE Jellyfin playlist to ONE quality segment + output folder + Tdarr library.
+# Which playlist you drop an item into decides its transcode flow (segment) - no genre guessing.
+# Targets that share an output_dir are one device (its "2D Animation" + "Standard" playlists both
+# land in that folder, under animation/ and standard/ subfolders).
+targets:
+  - playlist_name: "2D Animation"     # matched client-side by Name
+    segment: animation                # -> input_dir/animation/... ; flow branches on this
     output_dir: /mnt/smb/togo/iphone  # Tdarr flow writes here; glue reads it for done/orphan diff
-    library_id: lib_iphone            # the device's Tdarr library (shared flow); glue writes
-    input_dir: /mnt/pool/tdarr/in/iphone   #   <input_dir>/<profile.segment>/<source_rel>, scans library_id
-  - name: kids-ipad
-    playlist_name: "Togo - Kids iPad"
-    output_dir: /mnt/smb/togo/kids
-    library_id: lib_kids
-    input_dir: /mnt/pool/tdarr/in/kids
+    library_id: lib_iphone            # the device's Tdarr library (shared flow)
+    input_dir: /mnt/pool/tdarr/in/iphone
+  - playlist_name: "Standard"
+    segment: standard
+    output_dir: /mnt/smb/togo/iphone
+    library_id: lib_iphone
+    input_dir: /mnt/pool/tdarr/in/iphone
+  # A second device is just more targets with a different output_dir (+ its own library/input):
+  # - { playlist_name: "iPad 2D Animation", segment: animation, output_dir: /mnt/smb/togo/ipad,
+  #     library_id: lib_ipad, input_dir: /mnt/pool/tdarr/in/ipad }
+  # - { playlist_name: "iPad Standard", segment: standard, output_dir: /mnt/smb/togo/ipad,
+  #     library_id: lib_ipad, input_dir: /mnt/pool/tdarr/in/ipad }

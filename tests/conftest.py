@@ -1,4 +1,4 @@
-"""Shared fixtures: a tmp media/in/out tree, Config builder, and MediaItem factories."""
+"""Shared fixtures: a tmp media/in/out tree, Config builder, Target + MediaItem factories."""
 
 from __future__ import annotations
 
@@ -9,23 +9,12 @@ import pytest
 
 from media_sync_manager.models import (
     Config,
-    Device,
     JellyfinConfig,
     MediaItem,
     MediaSource,
-    Profile,
+    Target,
     TdarrConfig,
 )
-
-PROFILES = {
-    "standard": Profile(name="standard", segment="standard"),
-    "animation": Profile(
-        name="animation",
-        segment="animation",
-        match_genres=frozenset({"animation", "anime", "children", "cartoon", "family"}),
-        match_tags=frozenset({"anime", "kids"}),
-    ),
-}
 
 
 @pytest.fixture
@@ -40,14 +29,21 @@ def env(tmp_path: Path) -> SimpleNamespace:
 
 
 @pytest.fixture
-def make_device(env: SimpleNamespace):
-    def _make(name: str = "iphone", playlist: str = "PL") -> Device:
-        return Device(
-            name=name,
+def make_target(env: SimpleNamespace):
+    def _make(
+        *,
+        playlist: str = "PL",
+        segment: str = "standard",
+        device: str = "iphone",
+        library_id: str | None = None,
+        input_device: str | None = None,
+    ) -> Target:
+        return Target(
             playlist_name=playlist,
-            output_dir=str(env.outdir / name),
-            library_id=f"lib_{name}",
-            input_dir=str(env.indir / name),
+            segment=segment,
+            output_dir=str(env.outdir / device),
+            library_id=library_id or f"lib_{device}",
+            input_dir=str(env.indir / (input_device or device)),
         )
 
     return _make
@@ -55,15 +51,12 @@ def make_device(env: SimpleNamespace):
 
 @pytest.fixture
 def make_config(env: SimpleNamespace):
-    def _make(devices, *, path_maps=(), tdarr_path_maps=()) -> Config:
+    def _make(targets, *, path_maps=(), tdarr_path_maps=()) -> Config:
         return Config(
             jellyfin=JellyfinConfig(url="http://jf", api_key="k", user_id="u"),
             tdarr=TdarrConfig(url="http://td"),
             media_root=str(env.media),
-            profiles=PROFILES,
-            default_profile="standard",
-            profile_priority=("animation", "standard"),
-            devices=tuple(devices),
+            targets=tuple(targets),
             path_maps=path_maps,
             tdarr_path_maps=tdarr_path_maps,
         )
@@ -86,22 +79,11 @@ def write_source(env: SimpleNamespace):
 
 @pytest.fixture
 def make_episode():
-    def _make(
-        source_path: str,
-        *,
-        series_id: str | None = "series1",
-        genres=(),
-        tags=(),
-        size: int | None = 100,
-        name: str | None = None,
-    ) -> MediaItem:
+    def _make(source_path: str, *, size: int | None = 100, name: str | None = None) -> MediaItem:
         return MediaItem(
             id=source_path,
             name=name or Path(source_path).stem,
             type="Episode",
-            series_id=series_id,
-            genres=tuple(genres),
-            tags=tuple(tags),
             media_sources=(MediaSource(path=source_path, size=size),),
         )
 
