@@ -55,35 +55,35 @@ def test_hardlink_exdev_raises_permanent(tmp_path: Path, monkeypatch):
         fsops.hardlink(str(src), str(dest))
 
 
-def test_output_index_strips_ext_and_is_relative(tmp_path: Path):
+def test_index_files_strips_ext_and_is_relative(tmp_path: Path):
     out = tmp_path / "out"
     (out / "animation" / "Show" / "S01").mkdir(parents=True)
     (out / "animation" / "Show" / "S01" / "ep.mkv").write_bytes(b"x")
-    index = fsops.output_index(str(out))
+    index = fsops.index_files(str(out))
     rels = [rel for _full, rel in index]
     assert rels == ["animation/Show/S01/ep"]
 
 
-def test_output_index_missing_dir_is_empty(tmp_path: Path):
-    assert fsops.output_index(str(tmp_path / "nope")) == []
+def test_index_files_missing_dir_is_empty(tmp_path: Path):
+    assert fsops.index_files(str(tmp_path / "nope")) == []
 
 
-def test_output_index_unreadable_raises_transient(tmp_path: Path):
+def test_index_files_unreadable_raises_transient(tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
     os.chmod(out, 0o000)
     try:
         with pytest.raises(TransientError):
-            fsops.output_index(str(out))
+            fsops.index_files(str(out))
     finally:
         os.chmod(out, 0o755)  # restore so tmp cleanup works
 
 
-def test_delete_output_removes_only_target(tmp_path: Path):
+def test_unlink_removes_only_target(tmp_path: Path):
     a = tmp_path / "a.mkv"
     b = tmp_path / "b.mkv"
     a.write_bytes(b"x")
     b.write_bytes(b"x")
-    fsops.delete_output(str(a))
+    fsops.unlink(str(a))
     assert not a.exists()
     assert b.exists()

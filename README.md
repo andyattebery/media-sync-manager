@@ -7,45 +7,46 @@ A Plex-Sync equivalent for Jellyfin. Curate Jellyfin **playlists** (e.g. "2D Ani
 copies — produced by your existing **Tdarr** — for offline/travel viewing in Infuse.
 
 ```
-Jellyfin playlist  ->  media-sync-manager  ->  Tdarr (transcode)  ->  per-device SMB folder  ->  Infuse
+Jellyfin playlist  ->  media-sync-manager  ->  Tdarr (transcode)  ->  sync/ folder  ->  Infuse
 ```
 
-The glue is small and state-free: it reads playlists, routes each item to its transcode flow by
-which playlist it's in, hardlinks originals into the right Tdarr input folder, and removes outputs
-whose playlist entry was removed. It **never modifies or deletes originals** and keeps **no
-database** — the filesystem is the source of truth. See
-[the spec](docs/media-sync-manager-spec.md) for the full design.
+The glue is small and state-free: it keeps each Tdarr library's **input folder mirrored to its
+playlist** (hardlink in what's listed, remove what isn't) and lets Tdarr transcode and track what's
+done. When an item leaves a playlist it deletes that item's input **and** its transcoded output. It
+**never modifies or deletes originals** and keeps **no database** — the filesystem is the source of
+truth. See [the spec](docs/media-sync-manager-spec.md) for the full design.
 
 ## How it works
 
-- **The playlist decides the flow.** Each config *target* maps one playlist to a **segment** (e.g.
-  `animation` = aggressive/smaller, `standard` = higher-quality) — no genre guessing. The segment
-  rides in the input path (`<input_dir>/<segment>/...`), the only per-file channel Tdarr exposes.
-- **In-flight** = the input hardlink exists. **Done** = the output exists in the device folder
-  (matched segment-aware, so moving an item between playlists re-encodes it). No completion polling,
-  no markers.
+- **The playlist decides the flow.** Which playlist an item is in picks its **segment** (e.g.
+  `animation` = aggressive/smaller, `standard` = higher-quality) — no genre guessing.
+- **Dirs are derived from one `transcode_root`.** For a target `T` and segment `S`:
+  input = `<transcode_root>/<T>/<S>`, output = `<transcode_root>/<T>/sync`.
+- **Tdarr owns transcode tracking.** The glue just feeds inputs; Tdarr won't redo a done file. The
+  only output-side job is deleting `sync/` files no longer wanted (matched segment-aware, so moving
+  an item between playlists retires the old encode automatically).
 - **Pickup** is short-interval polling (Jellyfin emits no playlist events), plus `sync --once` for
   last-minute trips.
-- Targets that share an `output_dir` are one device; the glue reconciles them together so neither
-  deletes the other's files.
 
 ## Tdarr setup (you own this)
 
-Recommended topology: **one Tdarr library per device, all sharing one flow**. Each library:
+Recommended: **one Tdarr library per device**. The library scans the segment input folders
+(`<transcode_root>/<T>/animation`, `.../standard`) and its flow branches encode settings on the
+`/<segment>/` path component (`Check File Name Includes`, "include file directory"), writing output
+with **Keep Relative Path** to `<transcode_root>/<T>/sync`.
 
-- watches that device's `input_dir`,
-- sets a library variable `output_dir` = the device's SMB folder,
-- runs the shared flow, which branches encode settings on the `/<segment>/` path component
-  (`Check File Name Includes`, "include file directory") and writes output with **Keep Relative
-  Path** to `{{{args.userVariables.library.output_dir}}}`.
+Requirements the glue depends on (checked/reminded by `doctor`):
 
-The glue only needs, per target, an `input_dir` to hardlink into and a `library_id` to scan — so
-N×2-libraries or a single-library topology work too without code changes. Because matching is
-segment-aware, the flow must keep the relative path (output lands at
-`output_dir/<segment>/<source_rel>`).
+- **The flow keeps its input** after transcode — the input folders are the glue's playlist mirror.
+- **Enable Folder Watch on each library** (Library settings → Folder Watch) — Tdarr then polls the
+  folder (~30s) and picks up the glue's hardlinks; the glue's scan just makes it immediate.
+- The library **must not process `<transcode_root>/<T>/sync`** (point it at the segment folders, or
+  filter out `/sync/`).
+- **`media_root` and `transcode_root` must be on one filesystem** (hardlinks). In Docker, bind-mount
+  the shared storage once (e.g. `/mnt/storage:/media`, same as Jellyfin/Tdarr). `doctor` verifies it.
 
-**Hardlink requirement:** the media and every `input_dir` must be on **one shared filesystem**. In
-Docker, mount their common parent as a single volume (not two). `doctor` verifies this.
+If one library can't watch both segment folders on your Tdarr version, use one library per segment
+via the optional per-playlist `library_id`.
 
 ## Quick start (Docker)
 
@@ -63,7 +64,7 @@ docker compose up -d        # starts the poller (`run`)
 
 - `media-sync-manager run` — poller daemon (the container default).
 - `media-sync-manager sync --once [--dry-run]` — one reconcile pass; `--dry-run` changes nothing.
-- `media-sync-manager status` — desired vs present per device (read-only).
+- `media-sync-manager status` — planned actions per target (read-only).
 - `media-sync-manager doctor` — validate config, connectivity, library IDs, and the same-filesystem hardlink
   precondition.
 

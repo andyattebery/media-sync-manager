@@ -37,6 +37,7 @@ def test_to_glue_and_to_tdarr_round_trip():
         jellyfin=JellyfinConfig("http://jf", "k", "u"),
         tdarr=TdarrConfig("http://td"),
         media_root="/mnt/pool/media",
+        transcode_root="/mnt/pool/transcode",
         targets=(),
         path_maps=(PathMap("/data/media", "/mnt/pool/media"),),
         tdarr_path_maps=(PathMap("/mnt/pool/tdarr", "/mnt/tdarr"),),

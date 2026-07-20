@@ -1,20 +1,19 @@
-"""The reconciliation brain: compute a GroupPlan per output_dir from playlists + the filesystem.
+"""The reconciliation brain: compute a TargetPlan per target from playlists + the filesystem.
 
-Pure planning — it reads state (Jellyfin + the filesystem) and returns the actions to take, but does
-not execute them (sync.py does). Targets that share an `output_dir` are reconciled together so one
-target never treats another's outputs as orphans; matching is segment-aware
-(`<segment>/<relkey>`), so moving an item between playlists re-encodes it and retires the old output.
+Pure planning — reads state (Jellyfin + filesystem), returns actions, executes nothing (sync.py
+does). Per target: keep each library's input folder mirrored to its playlists (add missing hardlinks,
+remove un-listed ones) and sweep the `sync/` output folder to match (segment-aware), so an item that
+leaves a playlist loses both its input and its transcoded output. Tdarr owns transcode tracking.
 """
 
 from __future__ import annotations
 
 import posixpath
-from collections import OrderedDict
 
 from . import fsops, paths
 from .errors import PathRemapError, TransientError
 from .jellyfin import JellyfinClient
-from .models import Config, DeleteOutput, GroupPlan, MediaItem, Submit, Target
+from .models import AddInput, Config, DeleteOutput, MediaItem, RemoveInput, Target, TargetPlan
 
 
 def pick_media_source(item: MediaItem) -> str | None:
@@ -26,95 +25,93 @@ def pick_media_source(item: MediaItem) -> str | None:
     return best.path
 
 
-def _claims(present_rel: str, match_key: str) -> bool:
-    """True when an output path (minus ext) is the output for `match_key` (= <segment>/<relkey>).
+def _claimed(outrel: str, keep: set[str]) -> bool:
+    """True when a sync file (`outrel` = path under sync, ext-stripped) is a wanted output.
 
-    Exact match, or the present path ends with `/match_key` — the latter absorbs an extra prefix a
-    flow might add above the segment. The segment is part of the key, so a stale output under a
-    different segment does NOT match (re-categorised items get re-encoded, old outputs retired).
+    `keep` holds `<segment>/<rel_key>` for every desired input. Segment-aware, so a stale output
+    under a different segment is not claimed and gets swept.
     """
-    return present_rel == match_key or present_rel.endswith("/" + match_key)
+    return any(outrel == k or outrel.endswith("/" + k) for k in keep)
 
 
-def plan_all(config: Config, jellyfin: JellyfinClient) -> list[GroupPlan]:
-    """One GroupPlan per distinct output_dir, in first-seen order."""
-    groups: "OrderedDict[str, list[Target]]" = OrderedDict()
-    for target in config.targets:
-        groups.setdefault(target.output_dir, []).append(target)
-    return [_plan_group(out, targets, config, jellyfin) for out, targets in groups.items()]
+def plan_all(config: Config, jellyfin: JellyfinClient) -> list[TargetPlan]:
+    return [plan_target(t, config, jellyfin) for t in config.targets]
 
 
-def _plan_group(
-    output_dir: str, targets: list[Target], config: Config, jellyfin: JellyfinClient
-) -> GroupPlan:
-    desired: "OrderedDict[str, tuple[Target, str, str, str]]" = OrderedDict()
+def plan_target(target: Target, config: Config, jellyfin: JellyfinClient) -> TargetPlan:
+    base = posixpath.join(config.transcode_root, target.name)
+    output_dir = posixpath.join(base, "sync")
+
+    desired: dict[str, AddInput] = {}  # input_path -> AddInput
+    keep: set[str] = set()  # {<segment>/<rel_key>}
     skipped: list[str] = []
-    incomplete = False  # a target failed to fetch -> we must not delete (its items look orphaned)
+    incomplete = False
     error: str | None = None
 
-    for target in targets:
+    for pl in target.playlists:
+        input_seg_dir = posixpath.join(base, pl.segment)
+        library_id = pl.library_id or target.library_id
         try:
-            playlist_id = jellyfin.find_playlist(target.playlist_name)
+            playlist_id = jellyfin.find_playlist(pl.playlist_name)
             items = jellyfin.playlist_items(playlist_id)
         except TransientError as exc:
             incomplete = True
             error = str(exc)
-            skipped.append(f"{target.playlist_name}: {exc}")
+            skipped.append(f"{pl.playlist_name}: {exc}")
             continue
         for item in items:
             jf_path = pick_media_source(item)
             if not jf_path:
-                skipped.append(f"{target.playlist_name}/{item.name}: no usable media source")
+                skipped.append(f"{pl.playlist_name}/{item.name}: no usable media source")
                 continue
             try:
                 source = paths.to_glue(jf_path, config)
                 srel = paths.source_rel(source, config.media_root)
             except PathRemapError as exc:
-                skipped.append(f"{target.playlist_name}/{item.name}: {exc}")
+                skipped.append(f"{pl.playlist_name}/{item.name}: {exc}")
                 continue
             relkey = paths.rel_key(srel)
-            match_key = f"{target.segment}/{relkey}"
-            if match_key not in desired:  # same item in two same-segment playlists -> first wins
-                desired[match_key] = (target, source, srel, relkey)
-
-    try:
-        present = fsops.output_index(output_dir)
-    except TransientError as exc:
-        return GroupPlan(output_dir=output_dir, skipped=(*skipped, str(exc)), error=str(exc))
-    present_rels = [rel for _full, rel in present]
-
-    submits: list[Submit] = []
-    for match_key, (target, source, srel, relkey) in desired.items():
-        if any(_claims(p, match_key) for p in present_rels):
-            continue
-        input_path = posixpath.join(target.input_dir, target.segment, srel)
-        if fsops.exists(input_path):
-            skipped.append(f"{match_key}: in-flight")
-            continue
-        submits.append(
-            Submit(
+            input_path = posixpath.join(input_seg_dir, srel)
+            keep.add(f"{pl.segment}/{relkey}")
+            desired[input_path] = AddInput(
                 relkey=relkey,
-                segment=target.segment,
-                playlist=target.playlist_name,
+                segment=pl.segment,
+                playlist=pl.playlist_name,
                 source=source,
                 input_path=input_path,
                 tdarr_path=paths.to_tdarr(input_path, config),
-                library_id=target.library_id,
+                library_id=library_id,
             )
-        )
 
-    # Orphans: present outputs claimed by no desired key. Suppressed when the group is incomplete.
+    # Present inputs across the target's segment folders.
+    try:
+        present = {
+            full
+            for seg_dir in {posixpath.join(base, p.segment) for p in target.playlists}
+            for full, _rel in fsops.index_files(seg_dir)
+        }
+    except TransientError as exc:
+        return TargetPlan(target=target.name, skipped=(*skipped, str(exc)), error=str(exc))
+
+    adds = tuple(a for ip, a in desired.items() if ip not in present)
+
+    removes: tuple[RemoveInput, ...] = ()
     deletes: tuple[DeleteOutput, ...] = ()
     if not incomplete:
-        deletes = tuple(
-            DeleteOutput(path=full, match_key=rel)
-            for full, rel in present
-            if not any(_claims(rel, key) for key in desired)
-        )
+        removes = tuple(RemoveInput(ip) for ip in present if ip not in desired)
+        try:
+            deletes = tuple(
+                DeleteOutput(full)
+                for full, outrel in fsops.index_files(output_dir)
+                if not _claimed(outrel, keep)
+            )
+        except TransientError as exc:  # sync/ offline -> skip the sweep, keep everything
+            skipped.append(str(exc))
 
-    return GroupPlan(
-        output_dir=output_dir,
-        submits=tuple(submits),
+    return TargetPlan(
+        target=target.name,
+        adds=adds,
+        removes=removes,
         deletes=deletes,
         skipped=tuple(skipped),
         error=error,

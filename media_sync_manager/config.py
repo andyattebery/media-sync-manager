@@ -14,6 +14,7 @@ from .models import (
     Config,
     JellyfinConfig,
     PathMap,
+    Playlist,
     Target,
     TdarrConfig,
 )
@@ -44,16 +45,25 @@ def _require(d: dict[str, Any], key: str, where: str) -> Any:
     return d[key]
 
 
-def _path_maps(raw: Any, where: str) -> tuple[PathMap, ...]:
+def _path_maps(raw: Any, where: str, remote_key: str, remote_is_src: bool) -> tuple[PathMap, ...]:
+    """Parse `{local, <remote_key>}` entries into PathMap(src, dst) in the direction remap needs.
+
+    path_maps rewrite jellyfin->local (remote is the src); tdarr_path_maps rewrite local->tdarr
+    (remote is the dst). Anchoring both on `local` keeps the config free of confusing from/to.
+    """
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise ConfigError(f"{where}: must be a list of {{from, to}} entries")
+        raise ConfigError(f"{where}: must be a list of {{local, {remote_key}}} entries")
     out = []
     for i, entry in enumerate(raw):
-        if not isinstance(entry, dict) or "from" not in entry or "to" not in entry:
-            raise ConfigError(f"{where}[{i}]: must have 'from' and 'to'")
-        out.append(PathMap(src=str(entry["from"]), dst=str(entry["to"])))
+        if not isinstance(entry, dict) or "local" not in entry or remote_key not in entry:
+            raise ConfigError(f"{where}[{i}]: must have 'local' and '{remote_key}'")
+        local = str(entry["local"])
+        remote = str(entry[remote_key])
+        out.append(
+            PathMap(src=remote, dst=local) if remote_is_src else PathMap(src=local, dst=remote)
+        )
     return tuple(out)
 
 
@@ -61,19 +71,32 @@ def _targets(raw: Any) -> tuple[Target, ...]:
     if not isinstance(raw, list) or not raw:
         raise ConfigError("targets: must be a non-empty list")
     out = []
+    seen: set[str] = set()
     for i, t in enumerate(raw):
         where = f"targets[{i}]"
         if not isinstance(t, dict):
             raise ConfigError(f"{where}: must be a mapping")
-        out.append(
-            Target(
-                playlist_name=str(_require(t, "playlist_name", where)),
-                segment=str(_require(t, "segment", where)),
-                output_dir=str(_require(t, "output_dir", where)).rstrip("/"),
-                library_id=str(_require(t, "library_id", where)),
-                input_dir=str(_require(t, "input_dir", where)).rstrip("/"),
+        name = str(_require(t, "name", where))
+        if name in seen:
+            raise ConfigError(f"{where}: duplicate target name {name!r}")
+        seen.add(name)
+        library_id = str(_require(t, "library_id", where))
+        pls_raw = _require(t, "playlists", where)
+        if not isinstance(pls_raw, list) or not pls_raw:
+            raise ConfigError(f"{where}.playlists: must be a non-empty list")
+        playlists = []
+        for j, p in enumerate(pls_raw):
+            pw = f"{where}.playlists[{j}]"
+            if not isinstance(p, dict):
+                raise ConfigError(f"{pw}: must be a mapping")
+            playlists.append(
+                Playlist(
+                    playlist_name=str(_require(p, "playlist", pw)),
+                    segment=str(_require(p, "segment", pw)),
+                    library_id=(str(p["library_id"]) if p.get("library_id") else None),
+                )
             )
-        )
+        out.append(Target(name=name, library_id=library_id, playlists=tuple(playlists)))
     return tuple(out)
 
 
@@ -98,16 +121,16 @@ def parse(raw: dict[str, Any]) -> Config:
         submit_timeout_seconds=int(td.get("submit_timeout_seconds", 21600)),
     )
 
-    config = Config(
+    return Config(
         jellyfin=jellyfin,
         tdarr=tdarr,
         media_root=str(_require(raw, "media_root", "config")).rstrip("/"),
+        transcode_root=str(_require(raw, "transcode_root", "config")).rstrip("/"),
         targets=_targets(_require(raw, "targets", "config")),
-        path_maps=_path_maps(raw.get("path_maps"), "path_maps"),
-        tdarr_path_maps=_path_maps(raw.get("tdarr_path_maps"), "tdarr_path_maps"),
+        path_maps=_path_maps(raw.get("path_maps"), "path_maps", "jellyfin", remote_is_src=True),
+        tdarr_path_maps=_path_maps(raw.get("tdarr_path_maps"), "tdarr_path_maps", "tdarr", remote_is_src=False),
         poll_interval_seconds=int(raw.get("poll_interval_seconds", 45)),
     )
-    return config
 
 
 def load(path: str | Path) -> Config:

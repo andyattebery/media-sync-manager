@@ -1,7 +1,8 @@
 """Immutable data model: config, Jellyfin items, and the reconcile plan.
 
-The quality flow ("segment") is chosen by which playlist an item is in, not by genre — each config
-target maps one playlist to one segment + output + Tdarr library.
+The quality flow ("segment") is chosen by which playlist an item is in, not by genre. The glue keeps
+each Tdarr library's input folder mirrored to its playlist and lets Tdarr own transcode tracking;
+input + output dirs are derived from `transcode_root` by convention.
 """
 
 from __future__ import annotations
@@ -29,8 +30,8 @@ class MediaItem:
 
 @dataclass(frozen=True)
 class PathMap:
-    src: str  # "from": how the source system names a path
-    dst: str  # "to": how this system names the same bytes
+    src: str  # the namespace a path arrives in
+    dst: str  # the namespace we want it in (config.py fills these from the friendly YAML)
 
 
 @dataclass(frozen=True)
@@ -50,18 +51,24 @@ class TdarrConfig:
 
 
 @dataclass(frozen=True)
-class Target:
-    """One playlist -> one quality segment + one device output + one Tdarr library.
-
-    Targets that share an `output_dir` are one device (e.g. its '2D Animation' + 'Standard'
-    playlists); reconcile groups them so neither deletes the other's files.
-    """
+class Playlist:
+    """One Jellyfin playlist -> one quality segment (and optionally a specific Tdarr library)."""
 
     playlist_name: str
     segment: str
-    output_dir: str
+    library_id: str | None = None  # falls back to the target's library_id
+
+
+@dataclass(frozen=True)
+class Target:
+    """A device: a name (keys `<transcode_root>/<name>/...`), a default library, and its playlists.
+
+    Derived dirs: input = `<transcode_root>/<name>/<segment>`; output = `<transcode_root>/<name>/sync`.
+    """
+
+    name: str
     library_id: str
-    input_dir: str
+    playlists: tuple[Playlist, ...]
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,7 @@ class Config:
     jellyfin: JellyfinConfig
     tdarr: TdarrConfig
     media_root: str
+    transcode_root: str
     targets: tuple[Target, ...]
     path_maps: tuple[PathMap, ...] = ()
     tdarr_path_maps: tuple[PathMap, ...] = ()
@@ -78,10 +86,10 @@ class Config:
 # --- Reconcile plan ----------------------------------------------------------
 
 @dataclass(frozen=True)
-class Submit:
-    """A new item to push: hardlink the original into the input folder, then scan."""
+class AddInput:
+    """Hardlink an original into a library input folder, then scan so Tdarr transcodes it."""
 
-    relkey: str  # source path relative to media_root, minus extension
+    relkey: str  # source_rel minus extension
     segment: str
     playlist: str
     source: str  # glue-view path of the original
@@ -89,30 +97,30 @@ class Submit:
     tdarr_path: str  # tdarr-view of input_path, passed to scan-files
     library_id: str
 
-    @property
-    def match_key(self) -> str:
-        """The output identity: <segment>/<relkey> (the flow prepends the segment folder)."""
-        return f"{self.segment}/{self.relkey}"
+
+@dataclass(frozen=True)
+class RemoveInput:
+    """Delete an input hardlink whose item left the playlist (never a real original)."""
+
+    input_path: str
 
 
 @dataclass(frozen=True)
 class DeleteOutput:
-    """An orphan output to remove from a device folder (never a source/original)."""
+    """Delete a `sync/` output no longer backed by a desired item (req 9)."""
 
-    path: str  # glue-view path of the file to delete
-    match_key: str
+    path: str
 
 
 @dataclass(frozen=True)
-class GroupPlan:
-    """Reconcile result for one output_dir (all targets that write to it)."""
-
-    output_dir: str
-    submits: tuple[Submit, ...] = ()
+class TargetPlan:
+    target: str  # target name
+    adds: tuple[AddInput, ...] = ()
+    removes: tuple[RemoveInput, ...] = ()
     deletes: tuple[DeleteOutput, ...] = ()
-    skipped: tuple[str, ...] = ()  # human-readable reasons (no source, in-flight, ...)
-    error: str | None = None  # a target in this group failed to fetch -> deletes suppressed
+    skipped: tuple[str, ...] = ()  # human-readable reasons (no source, unmappable path, ...)
+    error: str | None = None  # a playlist failed to fetch -> removes + sweep suppressed
 
     @property
     def touched(self) -> bool:
-        return bool(self.submits or self.deletes)
+        return bool(self.adds or self.removes or self.deletes)

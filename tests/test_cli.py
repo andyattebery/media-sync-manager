@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import posixpath
 from pathlib import Path
 
 from fakes import FakeJellyfinClient, FakeTdarrClient
@@ -8,16 +7,23 @@ from fakes import FakeJellyfinClient, FakeTdarrClient
 from media_sync_manager import cli
 from media_sync_manager.errors import TransientError
 
-REL = "TV/Show/S01/ep.mkv"
+REL = "TV Shows/Meadowlark/S01/E01.mkv"
 
 
 def _jf(items):
     return FakeJellyfinClient(playlists={"PL": items})
 
 
-def test_dry_run_changes_nothing(make_target, make_config, write_source, make_episode):
-    t = make_target(segment="standard")
-    config = make_config([t])
+def _target(make_target, make_playlist):
+    return make_target(playlists=[make_playlist("PL", "standard")])
+
+
+def _input_path(env) -> str:
+    return str(Path(env.transcode) / "iphone" / "standard" / REL)
+
+
+def test_dry_run_changes_nothing(env, make_target, make_playlist, make_config, write_source, make_episode):
+    config = make_config([_target(make_target, make_playlist)])
     src = write_source(REL)
     td = FakeTdarrClient()
     lines: list[str] = []
@@ -26,41 +32,34 @@ def test_dry_run_changes_nothing(make_target, make_config, write_source, make_ep
 
     assert rc == 0
     assert td.scans == []
-    input_path = posixpath.join(t.input_dir, "standard", REL)
-    assert not Path(input_path).exists()
-    assert any("submit" in ln for ln in lines)
+    assert not Path(_input_path(env)).exists()
+    assert any("add" in ln for ln in lines)
 
 
-def test_real_sync_executes(make_target, make_config, write_source, make_episode):
-    t = make_target(segment="standard")
-    config = make_config([t])
+def test_real_sync_executes(env, make_target, make_playlist, make_config, write_source, make_episode):
+    config = make_config([_target(make_target, make_playlist)])
     src = write_source(REL)
     td = FakeTdarrClient()
 
     rc = cli.cmd_sync(config, _jf([make_episode(src)]), td, dry_run=False, out=lambda _l: None)
 
     assert rc == 0
-    input_path = posixpath.join(t.input_dir, "standard", REL)
-    assert Path(input_path).exists()
+    assert Path(_input_path(env)).exists()
     assert len(td.scans) == 1
     library_id, paths, _mode = td.scans[0]
     assert library_id == "lib_iphone"
-    assert paths == [input_path]
+    assert paths == [_input_path(env)]
 
 
-def test_transient_error_returns_nonzero(make_target, make_config):
-    t = make_target(segment="standard")
-    config = make_config([t])
+def test_transient_error_returns_nonzero(make_target, make_playlist, make_config):
+    config = make_config([_target(make_target, make_playlist)])
     jf = FakeJellyfinClient(find_error=TransientError("down"))
-    td = FakeTdarrClient()
-
-    rc = cli.cmd_sync(config, jf, td, dry_run=False, out=lambda _l: None)
+    rc = cli.cmd_sync(config, jf, FakeTdarrClient(), dry_run=False, out=lambda _l: None)
     assert rc == 1
 
 
-def test_status_is_read_only(make_target, make_config, write_source, make_episode):
-    t = make_target(segment="standard")
-    config = make_config([t])
+def test_status_is_read_only(env, make_target, make_playlist, make_config, write_source, make_episode):
+    config = make_config([_target(make_target, make_playlist)])
     src = write_source(REL)
     td = FakeTdarrClient()
     lines: list[str] = []
@@ -69,5 +68,4 @@ def test_status_is_read_only(make_target, make_config, write_source, make_episod
 
     assert rc == 0
     assert td.scans == []
-    input_path = posixpath.join(t.input_dir, "standard", REL)
-    assert not Path(input_path).exists()
+    assert not Path(_input_path(env)).exists()

@@ -1,7 +1,7 @@
-"""Filesystem operations: hardlink (with EXDEV guard), output indexing, orphan delete.
+"""Filesystem operations: hardlink (with EXDEV guard), directory indexing, unlink.
 
 The glue only ever reads originals, creates hardlinks into input folders, and deletes files inside
-device output folders. It never writes to or deletes originals.
+the input/output folders under transcode_root. It never writes to or deletes originals.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def hardlink(source: str, dest: str) -> None:
     """Hardlink `source` -> `dest`, creating parent dirs. No-op if `dest` already exists.
 
     Raises PermanentError on EXDEV: source and dest are on different filesystems, which defeats the
-    design (and, in Docker, means media and input_dir were bind-mounted from different volumes).
+    design (media_root and transcode_root must be one filesystem).
     """
     if exists(dest):
         return
@@ -39,40 +39,38 @@ def hardlink(source: str, dest: str) -> None:
         if exc.errno == errno.EXDEV:
             raise PermanentError(
                 f"cannot hardlink across filesystems: {source!r} -> {dest!r}. "
-                "media and input_dir must share one filesystem "
+                "media_root and transcode_root must share one filesystem "
                 "(in Docker, mount their common parent as a single volume)."
             ) from exc
         raise
 
 
-def output_index(output_dir: str) -> list[tuple[str, str]]:
-    """List every file under `output_dir` as (full_path, rel_no_ext).
+def index_files(root: str) -> list[tuple[str, str]]:
+    """List every file under `root` as (full_path, rel_no_ext).
 
-    `rel_no_ext` is the path relative to output_dir, POSIX-normalised, with the extension stripped —
-    the same shape as a desired `relkey`, so matching is a direct comparison.
+    `rel_no_ext` is the path relative to `root`, POSIX-normalised, extension stripped. Used for both
+    input folders (compare full paths) and the sync folder (segment-aware output sweep).
 
-    A non-existent output_dir means "nothing synced yet" -> empty. An existing-but-inaccessible
-    output_dir (e.g. an SMB mount that's offline) raises TransientError so the caller skips the
-    device without computing orphans.
+    A non-existent `root` means "nothing there yet" -> empty. An existing-but-inaccessible `root`
+    (e.g. an offline mount) raises TransientError so the caller can skip without deleting anything.
     """
-    if not os.path.exists(output_dir):
+    if not os.path.exists(root):
         return []
-    if not os.access(output_dir, os.R_OK | os.X_OK):
-        raise TransientError(f"output_dir not accessible: {output_dir}")
+    if not os.access(root, os.R_OK | os.X_OK):
+        raise TransientError(f"directory not accessible: {root}")
     out: list[tuple[str, str]] = []
-    for root, _dirs, files in os.walk(output_dir):
+    for dirpath, _dirs, files in os.walk(root):
         for name in files:
-            full = os.path.join(root, name)
-            rel = os.path.relpath(full, output_dir).replace("\\", "/")
-            rel_no_ext = os.path.splitext(rel)[0]
-            out.append((full, rel_no_ext))
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            out.append((full, os.path.splitext(rel)[0]))
     return out
 
 
-def delete_output(path: str) -> None:
-    """Delete a single output file (only ever called for orphans inside a device folder)."""
+def unlink(path: str) -> None:
+    """Delete a single file (an input hardlink or a swept output — never a real original)."""
     try:
         os.remove(path)
     except FileNotFoundError:
         pass  # already gone; fine
-    _log.info("deleted orphan output %s", path)
+    _log.info("deleted %s", path)

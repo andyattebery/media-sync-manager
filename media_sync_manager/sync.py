@@ -1,4 +1,4 @@
-"""Execute reconcile plans and run one full sync cycle across all output groups."""
+"""Execute reconcile plans and run one full sync cycle across all targets."""
 
 from __future__ import annotations
 
@@ -7,42 +7,43 @@ from collections import OrderedDict
 from . import fsops, log, reconcile
 from .errors import PermanentError, TransientError
 from .jellyfin import JellyfinClient
-from .models import Config, GroupPlan
+from .models import Config, TargetPlan
 from .tdarr import TdarrClient
 
 _log = log.get("sync")
 
 
-def describe(plan: GroupPlan) -> list[str]:
+def describe(plan: TargetPlan) -> list[str]:
     """Human-readable lines describing the planned actions (used by --dry-run and status)."""
     lines: list[str] = []
     if plan.error:
-        lines.append(f"[{plan.output_dir}] INCOMPLETE: {plan.error} (deletes suppressed)")
-    for s in plan.submits:
-        lines.append(f"[{plan.output_dir}] submit ({s.segment} <- {s.playlist}): {s.relkey}")
+        lines.append(f"[{plan.target}] INCOMPLETE: {plan.error} (removes + sweep suppressed)")
+    for a in plan.adds:
+        lines.append(f"[{plan.target}] add ({a.segment} <- {a.playlist}): {a.relkey}")
+    for r in plan.removes:
+        lines.append(f"[{plan.target}] remove input: {r.input_path}")
     for d in plan.deletes:
-        lines.append(f"[{plan.output_dir}] delete orphan: {d.path}")
+        lines.append(f"[{plan.target}] delete output: {d.path}")
     for reason in plan.skipped:
-        lines.append(f"[{plan.output_dir}] skip: {reason}")
+        lines.append(f"[{plan.target}] skip: {reason}")
     if not plan.touched and not plan.skipped and not plan.error:
-        lines.append(f"[{plan.output_dir}] in sync")
+        lines.append(f"[{plan.target}] in sync")
     return lines
 
 
-def execute(plan: GroupPlan, tdarr: TdarrClient) -> None:
-    """Apply a plan's side effects: hardlink + scan new items, delete orphan outputs.
-
-    Submits are grouped by library_id (a shared output_dir may span more than one library) so each
-    library scans in a single call.
-    """
+def execute(plan: TargetPlan, tdarr: TdarrClient) -> None:
+    """Apply a plan: hardlink + scan new inputs (grouped by library_id), unlink removed inputs and
+    swept outputs."""
     by_library: "OrderedDict[str, list[str]]" = OrderedDict()
-    for s in plan.submits:
-        fsops.hardlink(s.source, s.input_path)
-        by_library.setdefault(s.library_id, []).append(s.tdarr_path)
+    for a in plan.adds:
+        fsops.hardlink(a.source, a.input_path)
+        by_library.setdefault(a.library_id, []).append(a.tdarr_path)
     for library_id, tdarr_paths in by_library.items():
         tdarr.scan_files(library_id, tdarr_paths)
+    for r in plan.removes:
+        fsops.unlink(r.input_path)
     for d in plan.deletes:
-        fsops.delete_output(d.path)
+        fsops.unlink(d.path)
 
 
 def run_cycle(
@@ -51,10 +52,10 @@ def run_cycle(
     tdarr: TdarrClient,
     *,
     dry_run: bool = False,
-) -> list[GroupPlan]:
-    """Reconcile and (unless dry_run) apply every output group. Returns the plans for reporting.
+) -> list[TargetPlan]:
+    """Reconcile and (unless dry_run) apply every target. Returns the plans for reporting.
 
-    Per-group errors are logged and do not abort the cycle; the daemon stays up.
+    Per-target errors are logged and do not abort the cycle; the daemon stays up.
     """
     plans = reconcile.plan_all(config, jellyfin)
     if dry_run:
@@ -63,7 +64,7 @@ def run_cycle(
         try:
             execute(plan, tdarr)
         except TransientError as exc:
-            _log.warning("%s: %s (will retry next cycle)", plan.output_dir, exc)
+            _log.warning("target %s: %s (will retry next cycle)", plan.target, exc)
         except PermanentError as exc:
-            _log.error("%s: %s", plan.output_dir, exc)
+            _log.error("target %s: %s", plan.target, exc)
     return plans

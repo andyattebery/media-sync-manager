@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import posixpath
 from pathlib import Path
 from typing import Callable
 
@@ -57,6 +58,10 @@ def _st_dev(path: str) -> int:
     return os.stat(p).st_dev
 
 
+def _input_dir(config: Config, target_name: str, segment: str) -> str:
+    return posixpath.join(config.transcode_root, target_name, segment)
+
+
 def cmd_doctor(
     config: Config, jellyfin: JellyfinClient, tdarr: TdarrClient, *, out: Out = print
 ) -> int:
@@ -68,41 +73,54 @@ def cmd_doctor(
         out(f"[{'OK ' if passed else 'FAIL'}] {label}{': ' + detail if detail else ''}")
 
     # Jellyfin reachability + auth + playlists exist (one check per distinct playlist).
-    for name in dict.fromkeys(t.playlist_name for t in config.targets):
+    for name in dict.fromkeys(pl.playlist_name for t in config.targets for pl in t.playlists):
         try:
             jellyfin.find_playlist(name)
             check(f"jellyfin playlist '{name}'", True)
         except TransientError as exc:
             check(f"jellyfin playlist '{name}'", False, str(exc))
 
-    # Tdarr reachability + auth + libraries exist; compare source folder in tdarr-view.
+    # Tdarr reachability + auth + libraries exist; each library must watch (an ancestor of) its
+    # segment input dir, compared in tdarr-view.
+    pairs = dict.fromkeys(
+        (pl.library_id or t.library_id, _input_dir(config, t.name, pl.segment))
+        for t in config.targets
+        for pl in t.playlists
+    )
     try:
         libs = tdarr.list_libraries()
         by_id = {str(lib.get("_id")): lib for lib in libs}
         check("tdarr reachable + libraries listed", True, f"{len(libs)} libraries")
-        for lib_id, input_dir in dict.fromkeys((t.library_id, t.input_dir) for t in config.targets):
+        for lib_id, input_dir in pairs:
             lib = by_id.get(lib_id)
             if lib is None:
                 check(f"library_id '{lib_id}'", False, "not found")
                 continue
             want = paths.to_tdarr(input_dir, config)
             src = _library_source(lib)
-            matches = src is not None and (src.rstrip("/") == want.rstrip("/"))
+            src_ok = src is not None and (
+                want == src.rstrip("/") or want.startswith(src.rstrip("/") + "/")
+            )
             check(
-                f"library '{lib_id}' source == tdarr_view(input_dir)",
-                matches,
-                f"tdarr={src!r} want={want!r}",
+                f"library '{lib_id}' watches '{input_dir}'",
+                src_ok,
+                f"tdarr_source={src!r} input(tdarr-view)={want!r}",
             )
     except TransientError as exc:
         check("tdarr reachable", False, str(exc))
 
-    # Hardlink precondition: media_root and each input_dir share a filesystem.
+    # Hardlink precondition: media_root and each segment input dir share a filesystem.
     media_dev = _st_dev(config.media_root)
-    for input_dir in dict.fromkeys(t.input_dir for t in config.targets):
-        same = _st_dev(input_dir) == media_dev
-        check(f"media_root <-> input_dir '{input_dir}' same filesystem", same)
+    for input_dir in dict.fromkeys(
+        _input_dir(config, t.name, pl.segment) for t in config.targets for pl in t.playlists
+    ):
+        check(f"media_root <-> '{input_dir}' same filesystem", _st_dev(input_dir) == media_dev)
 
-    out("NOTE: scan_mode assumed 'scanFolderWatcher'; confirm a single file enqueues on this instance.")
+    out("NOTE: your Tdarr flow must KEEP its input file after transcode, and must NOT process")
+    out("      <target>/sync (point the library at the segment folders or filter out /sync/).")
+    out("NOTE: enqueue uses scanFolderWatcher + the file path. Enable Folder Watch on each library")
+    out("      (Library settings -> Folder Watch) so Tdarr polls the folder (~30s) and reliably")
+    out("      picks up new files; the glue's scan just makes it immediate.")
     return 0 if ok else 1
 
 
@@ -132,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync = sub.add_parser("sync", help="run one reconcile cycle")
     p_sync.add_argument("--once", action="store_true", help="single pass (default for sync)")
     p_sync.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
-    sub.add_parser("status", help="show desired vs present per output group (read-only)")
+    sub.add_parser("status", help="show planned actions per target (read-only)")
     sub.add_parser("doctor", help="validate config, connectivity, and preconditions")
     return parser
 

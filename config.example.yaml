@@ -1,3 +1,12 @@
+# media_root and transcode_root MUST be on the same filesystem (the glue hardlinks originals into
+# transcode_root; os.link across filesystems fails EXDEV). Here both live under /media.
+#
+# Deployment note: /mnt/storage is bind-mounted to /media in the Jellyfin & Tdarr containers. Run
+# this glue container with the SAME mount (-  /mnt/storage:/media), so all three agree on /media/...
+# paths and no path maps are needed.
+
+media_root: /media                              # covers /media/Movies, /media/TV Shows, /media/Kids *
+transcode_root: /media/Transcode Videos         # inputs + sync/ outputs; same fs as media_root
 poll_interval_seconds: 45
 
 jellyfin:
@@ -10,32 +19,29 @@ tdarr:
   username: "${TDARR_USER}"           # omit username+password if the instance has auth disabled
   password: "${TDARR_PASS}"
   request_timeout_seconds: 20
-  submit_timeout_seconds: 21600       # 6h: input link present this long with no output -> status flags it
-  # scan_mode is auto-detected by `doctor` (scanFolderWatcher vs scanFindNew), not set here
 
-media_root: /mnt/pool/media           # glue-view root; defines source_rel + relkey
-path_maps:                            # jellyfin-view -> glue-view (longest prefix wins)
-  - { from: /data/media, to: /mnt/pool/media }
-tdarr_path_maps:                      # glue-view -> tdarr-view (omit if co-located)
-  - { from: /mnt/pool/tdarr, to: /mnt/tdarr }
-
-# Each target maps ONE Jellyfin playlist to ONE quality segment + output folder + Tdarr library.
-# Which playlist you drop an item into decides its transcode flow (segment) - no genre guessing.
-# Targets that share an output_dir are one device (its "2D Animation" + "Standard" playlists both
-# land in that folder, under animation/ and standard/ subfolders).
+# Each target = one device: a name (keys the dirs), a Tdarr library, and its playlist->segment pairs.
+# Derived per (target, segment):
+#   input   <transcode_root>/<name>/<segment>/<source_rel>
+#   output  <transcode_root>/<name>/sync/<segment>/<source_rel>   (Tdarr's flow writes here)
+# Which playlist you drop an item into decides its segment (transcode flow).
 targets:
-  - playlist_name: "2D Animation"     # matched client-side by Name
-    segment: animation                # -> input_dir/animation/... ; flow branches on this
-    output_dir: /mnt/smb/togo/iphone  # Tdarr flow writes here; glue reads it for done/orphan diff
-    library_id: lib_iphone            # the device's Tdarr library (shared flow)
-    input_dir: /mnt/pool/tdarr/in/iphone
-  - playlist_name: "Standard"
-    segment: standard
-    output_dir: /mnt/smb/togo/iphone
+  - name: iphone
     library_id: lib_iphone
-    input_dir: /mnt/pool/tdarr/in/iphone
-  # A second device is just more targets with a different output_dir (+ its own library/input):
-  # - { playlist_name: "iPad 2D Animation", segment: animation, output_dir: /mnt/smb/togo/ipad,
-  #     library_id: lib_ipad, input_dir: /mnt/pool/tdarr/in/ipad }
-  # - { playlist_name: "iPad Standard", segment: standard, output_dir: /mnt/smb/togo/ipad,
-  #     library_id: lib_ipad, input_dir: /mnt/pool/tdarr/in/ipad }
+    playlists:
+      - { playlist: "2D Animation", segment: animation }
+      - { playlist: "Standard",     segment: standard }
+      # per-playlist override if you use one Tdarr library per segment:
+      # - { playlist: "Standard", segment: standard, library_id: lib_iphone_standard }
+
+# A second device is just another target with a different name:
+#   - name: ipad
+#     library_id: lib_ipad
+#     playlists:
+#       - { playlist: "iPad 2D Animation", segment: animation }
+#       - { playlist: "iPad Standard",     segment: standard }
+
+# Optional path maps — only if the glue sees a folder at a different path than Jellyfin/Tdarr do
+# (mismatched container mounts). Each entry is anchored on the glue's `local` path:
+# path_maps:       [ { local: /media, jellyfin: /data/media } ]   # jellyfin path -> local, on the way in
+# tdarr_path_maps: [ { local: /media, tdarr: /mnt/tdarr } ]       # local -> tdarr path, on the way out
