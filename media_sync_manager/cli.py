@@ -149,6 +149,40 @@ def cmd_doctor(
     return 0 if ok else 1
 
 
+def cmd_web(
+    config: Config,
+    jellyfin: JellyfinClient,
+    tdarr: TdarrClient,
+    *,
+    host: str,
+    port: int,
+    out: Out = print,
+) -> int:
+    """Serve the playlist editor.
+
+    `config` and `tdarr` are inert here — the web layer reads only the Jellyfin client — but the
+    signature matches every other command so main()'s dispatch stays uniform.
+    """
+    try:
+        # Probe first so the error names the missing *extra*, not an internal module. Also the
+        # seam tests monkeypatch to force the failure.
+        import flask  # noqa: F401
+    except ImportError:
+        out("the 'web' command needs Flask, which is an optional extra.")
+        out("  pip install 'media-sync-manager[web]'")
+        out("  (the published Docker image already includes it)")
+        return 2
+
+    # Imported lazily so run/sync/status/doctor never pull flask into their import path.
+    from . import web
+
+    app = web.create_app(jellyfin)
+    out(f"playlist editor on http://{host}:{port}")
+    out("NOTE: no authentication — keep this on your LAN, never port-forward it.")
+    app.run(host=host, port=port)
+    return 0
+
+
 def _library_source(lib: dict) -> str | None:
     """Best-effort extraction of a Tdarr library's source folder (field name varies by version)."""
     for key in ("folder", "path", "sourceFolder", "source"):
@@ -181,6 +215,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="validate config, connectivity, and preconditions "
         "(writes and removes temp probe files under transcode_root)",
     )
+    p_web = sub.add_parser("web", help="serve the playlist editor UI")
+    # 0.0.0.0 because the container case is primary: 127.0.0.1 inside a container is unreachable
+    # through a port mapping. Host exposure is the compose `ports:` line.
+    p_web.add_argument("--host", default="0.0.0.0", help="bind address (default 0.0.0.0)")
+    p_web.add_argument("--port", type=int, default=8087, help="bind port (default 8087)")
     return parser
 
 
@@ -203,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_status(config, jellyfin, tdarr)
         if args.command == "doctor":
             return cmd_doctor(config, jellyfin, tdarr)
+        if args.command == "web":
+            return cmd_web(config, jellyfin, tdarr, host=args.host, port=args.port)
     except MediaSyncError as exc:
         # e.g. detect_mode finding that neither hardlink nor symlink works here.
         print(f"error: {exc}")

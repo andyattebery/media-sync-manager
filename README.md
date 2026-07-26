@@ -84,10 +84,49 @@ docker compose up -d        # starts the poller (`run`)
 - `media-sync-manager status` — planned actions per target (read-only).
 - `media-sync-manager doctor` — validate config, connectivity, library IDs, and probe how inputs can
   be created. Writes and removes temp files under `transcode_root`.
+- `media-sync-manager web [--host H] [--port P]` — serve the playlist editor (default `0.0.0.0:8087`).
+
+## Playlist editor (web UI)
+
+Jellyfin's own web UI has no fast way to remove many items from a playlist. This serves a small page
+that lists a playlist grouped by show → season → episode, with bulk selection. See
+[the editor design doc](docs/playlist-editor.md) for the Jellyfin API constraints it works around and
+why several of its choices are what they are.
+
+- tick a **season** or a **show** to take everything under it (tri-state, so partial selections are
+  visible),
+- **Select first N** on any row takes that item and everything above it in its group — for the usual
+  "watched S02E01–E10 and stopped" case, one click instead of ten. The label states the number it
+  will select and flips to **Clear first N** once that range is selected,
+- **Select all**, then Remove.
+
+`docker compose up -d` now starts two containers; the editor is at `http://<host>:8087`. It needs the
+same `environment:` secrets as the poller, because config is expanded whole before any command runs.
+
+Locally: `pip install -e ".[web]"` then `media-sync-manager web --config ./config.yaml`.
+
+**There is no authentication.** Keep it on your LAN and never port-forward it — anyone who can reach
+the port can edit your playlists.
+
+Notes worth knowing:
+
+- Removals hit Jellyfin immediately. The poller retires the input and the transcoded `sync/` output
+  within `poll_interval_seconds`. **Originals under `media_root` are never touched.**
+- There is no undo.
+- Jellyfin's `PlaylistItemId` currently caches the media item's Guid, so two copies of one episode
+  share an entry id: removing one removes both. Those rows are badged `×2`.
+- Jellyfin returns `204` even when nothing matched, so the page re-reads the playlist after every
+  removal and reports the count delta. If the server accepts a removal and the list does not shrink,
+  it says so rather than claiming success.
 
 ## Development
 
 ```sh
-pip install -e ".[test]"
-pytest tests/ -v
+pip install -e ".[web,test]"
+pytest                       # 132 tests, no browser
+
+# browser tests for the editor UI (opt-in: ~150MB of browser binaries)
+pip install -e ".[e2e]"
+playwright install chromium
+pytest -m e2e                # must report a non-zero collected count
 ```

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Without this, mobile browsers lay out at a 980px virtual viewport and scale down, shrinking
+     every touch target to a third of its size. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playlist editor</title>
+<!-- Order is the override mechanism: Bootstrap first, ours second. -->
+<link rel="stylesheet" href="bootstrap.min.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main class="container-lg py-3">
+
+  <header class="d-flex align-items-baseline flex-wrap gap-2 mb-2">
+    <h1 class="h5 mb-0">Playlist editor</h1>
+    <span class="text-body-secondary small">· media-sync-manager</span>
+    <a id="server-link" class="link-secondary small ms-auto text-decoration-none"
+       target="_blank" rel="noopener" hidden></a>
+  </header>
+
+  <p class="text-body-secondary small border-start border-3 ps-2 mb-3">
+    These playlists decide what gets transcoded to each device. Removing an item here removes it from
+    the playlist in Jellyfin, and the next sync cycle deletes its transcoded copy.
+    <strong>Originals are never touched.</strong>
+  </p>
+
+  <div class="d-flex gap-2 align-items-center mb-2">
+    <select id="playlist" class="form-select" aria-label="Playlist">
+      <option value="">Choose a playlist…</option>
+    </select>
+    <button id="reload" class="btn btn-outline-secondary flex-shrink-0" type="button"
+            title="Re-read this playlist from Jellyfin">↻</button>
+  </div>
+
+  <!-- d-none, not the `hidden` attribute: Bootstrap's .d-flex is display:flex!important, which
+       beats the UA stylesheet's [hidden]. .d-none is declared after .d-flex so it wins. -->
+  <div id="toolbar" class="d-none gap-3 align-items-center flex-wrap border-bottom py-2 sticky-top bg-body">
+    <div class="form-check mb-0">
+      <input class="form-check-input" type="checkbox" id="select-all">
+      <label class="form-check-label" for="select-all">Select all</label>
+    </div>
+    <span id="counts" class="text-body-secondary small ms-auto"></span>
+    <button id="remove" class="btn btn-danger btn-sm flex-shrink-0" type="button" disabled>
+      Remove selected (0)
+    </button>
+  </div>
+
+  <p id="status" class="text-body-secondary small my-2" role="status" aria-live="polite"></p>
+  <div id="warnings" class="alert alert-danger py-2 small d-none"></div>
+  <div id="tree" class="accordion accordion-flush"></div>
+
+</main>
+<script src="bootstrap.bundle.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -26,6 +26,86 @@ class MediaItem:
     media_sources: tuple[MediaSource, ...] = ()
 
 
+# --- Playlist editing (web UI only; never consumed by reconcile) -------------
+#
+# Deliberately separate from MediaItem. The sync path asks Jellyfin for
+# `fields=Path,MediaSources`; the editor asks for neither and needs series/season
+# metadata instead, so one class would make "series_name is None" ambiguous
+# between "this is a Movie" and "we didn't request that field".
+
+@dataclass(frozen=True)
+class PlaylistSummary:
+    """A playlist as the picker sees it. Distinct from `Playlist` below, which is a config row."""
+
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class PlaylistEntry:
+    """One row of a Jellyfin playlist, for browsing and removal only.
+
+    `playlist_item_id` is the ONLY value valid as an `entryIds` argument to the removal endpoint.
+    There is deliberately no attribute named `id`: passing the *media item's* id to the delete call
+    is the obvious bug here, and it must not be spellable. It happens to work on today's Jellyfin
+    (PlaylistItemId caches the item Guid) and would break silently the day that changes.
+    """
+
+    playlist_item_id: str  # PlaylistItemId, falling back to Id; "" when unaddressable
+    item_id: str  # display/debug only
+    name: str
+    type: str  # "Episode" | "Movie" | ...
+    series_id: str | None = None
+    series_name: str | None = None
+    season_id: str | None = None
+    season_name: str | None = None
+    season_number: int | None = None  # ParentIndexNumber
+    episode_number: int | None = None  # IndexNumber
+
+    @property
+    def removable(self) -> bool:
+        return bool(self.playlist_item_id)
+
+
+@dataclass(frozen=True)
+class RemovalResult:
+    """Outcome of a (chunked) playlist removal.
+
+    Distinct from `CycleResult` below: that one is about applying a sync plan to the filesystem,
+    this one is about one HTTP mutation against Jellyfin. `removed` means "the server accepted it",
+    not "it is verifiably gone" — Jellyfin answers 204 even when no entryId matched.
+    """
+
+    requested: int
+    removed: int
+    failed: int
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SeasonGroup:
+    key: str  # "<show_key>|<n>" or "<show_key>|none"
+    title: str
+    number: int | None
+    entries: tuple[PlaylistEntry, ...] = ()
+
+    @property
+    def count(self) -> int:
+        return len(self.entries)
+
+
+@dataclass(frozen=True)
+class ShowGroup:
+    key: str  # "series:<id>" | "series:name:<casefold>" | "type:<Type>"
+    title: str
+    kind: str  # "series" | "type"
+    seasons: tuple[SeasonGroup, ...] = ()
+
+    @property
+    def count(self) -> int:
+        return sum(s.count for s in self.seasons)
+
+
 # --- Config ------------------------------------------------------------------
 
 @dataclass(frozen=True)

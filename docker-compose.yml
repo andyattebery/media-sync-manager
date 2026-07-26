@@ -18,3 +18,27 @@ services:
       # CIFS/SMB works for reads but not for creating inputs: SMB has no symlink-create operation,
       # and a hardlink into a union pool (mergerfs) fails EXDEV. See `doctor`.
       - /mnt/storage:/media
+
+  # Playlist editor: pick a playlist, bulk-select by show/season, remove. Jellyfin's own web UI has
+  # no fast way to do this. Removals land in Jellyfin immediately and the poller above retires the
+  # inputs and transcoded outputs on its next cycle.
+  media-sync-manager-web:
+    build: .
+    image: ghcr.io/andyattebery/media-sync-manager:latest
+    restart: unless-stopped
+    command: ["web", "--config", "/etc/media-sync-manager/config.yaml", "--port", "8087"]
+    ports:
+      # LAN only — the editor has NO authentication. Never port-forward this.
+      - "8087:8087"
+    # Required, and TDARR_* is not a copy-paste slip: config.load() expands the WHOLE document
+    # before any command runs and hard-fails on a missing ${VAR}, so this container dies at startup
+    # without them even though it never opens a Tdarr connection.
+    environment:
+      - JELLYFIN_API_KEY
+      - TDARR_USER
+      - TDARR_PASS
+    volumes:
+      # No /media mount: the editor only talks to Jellyfin over HTTP. fsops.detect_mode is reached
+      # only from sync.run_cycle and doctor, never from the web path, so this container physically
+      # cannot touch media files.
+      - /etc/media-sync-manager/config.yaml:/etc/media-sync-manager/config.yaml:ro

@@ -13,9 +13,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+web = [
+    "flask>=3",
+]
 test = [
     "pytest",
     "responses",
+    "flask>=3",
+]
+# ~150MB of browser binaries — deliberately NOT in `test`, so the default run stays fast.
+e2e = [
+    "pytest-playwright",
 ]
 
 [project.scripts]
@@ -24,5 +32,17 @@ media-sync-manager = "media_sync_manager.cli:main"
 [tool.setuptools]
 packages = ["media_sync_manager"]
 
+# Without this the wheel ships .py only, and the installed image serves /api/* fine while GET /
+# 404s — a Docker-only failure that looks like a routing bug.
+[tool.setuptools.package-data]
+media_sync_manager = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "e2e: browser tests; needs the [e2e] extra and `playwright install chromium`",
+]
+# Bare `pytest` stays fast even on a machine with the extra installed (importorskip only skips
+# when playwright is *absent*). `pytest -m e2e` is the only way to start a browser.
+# --strict-markers turns a typo'd marker into an error instead of a silently-skipped module.
+addopts = "-m 'not e2e' --strict-markers"

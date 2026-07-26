@@ -53,3 +53,7 @@ targets:
 # (mismatched container mounts). Each entry is anchored on the glue's `local` path:
 # path_maps:       [ { local: /media, jellyfin: /data/media } ]   # jellyfin path -> local, on the way in
 # tdarr_path_maps: [ { local: /media, tdarr: /mnt/tdarr } ]       # local -> tdarr path, on the way out
+
+# The playlist editor (`media-sync-manager web`) needs no config of its own — it reuses the
+# `jellyfin:` block above. Bind address and port are CLI flags (--host/--port, default 0.0.0.0:8087)
+# rather than config, because in Docker the effective control is the compose `ports:` mapping.

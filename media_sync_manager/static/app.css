@@ -1,0 +1,15 @@
+/* Everything here is what Bootstrap has no opinion about. If this file starts growing, the answer is
+   almost always a Bootstrap utility rather than a rule here.
+
+   Note there is deliberately no font-size rule: Bootstrap leaves the root at the browser's 16px, so
+   .form-check-input (1em) renders at 16px. The previous framework scaled the root up to 125% on wide
+   viewports, which is what made the checkboxes render at 25px on a desktop. */
+
+main.container-lg { max-width: 820px; }
+
+/* Bootstrap sizes the accordion chevron for prose-scale headers; too heavy for a dense season list.
+   (Font size needs no rule here: the header carries .fs-6, so button and checkbox both inherit.) */
+.accordion-button::after { width: .9rem; height: .9rem; background-size: .9rem; }
+
+/* A season header sits one level in from its show. */
+.season-group .accordion-button { padding-left: .5rem; }

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import errno
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 from fakes import FakeJellyfinClient, FakeTdarrClient
@@ -101,3 +103,48 @@ def test_status_is_read_only(env, make_target, make_playlist, make_config, write
     assert rc == 0
     assert td.scans == []
     assert not Path(_input_path(env)).exists()
+
+
+# --- web subcommand ----------------------------------------------------------
+
+
+def test_web_parser_defaults():
+    args = cli.build_parser().parse_args(["web"])
+    # 0.0.0.0 because 127.0.0.1 inside a container is unreachable through a port mapping.
+    assert (args.host, args.port) == ("0.0.0.0", 8087)
+    assert cli.build_parser().parse_args(["web", "--port", "9000"]).port == 9000
+
+
+def test_web_without_the_extra_explains_the_extra(monkeypatch):
+    """The message must name the install extra, not an internal module."""
+    monkeypatch.setitem(sys.modules, "flask", None)
+    lines: list[str] = []
+    rc = cli.cmd_web(None, None, None, host="0.0.0.0", port=8087, out=lines.append)
+    assert rc == 2
+    assert any("media-sync-manager[web]" in ln for ln in lines)
+
+
+def test_web_passes_host_and_port_through(monkeypatch):
+    from media_sync_manager import web as web_mod
+
+    seen = {}
+
+    class StubApp:
+        def run(self, host, port):
+            seen["host"], seen["port"] = host, port
+
+    monkeypatch.setattr(web_mod, "create_app", lambda jellyfin: StubApp())
+    jf = _jf([])
+    rc = cli.cmd_web(None, jf, None, host="1.2.3.4", port=9999, out=lambda _l: None)
+    assert rc == 0 and seen == {"host": "1.2.3.4", "port": 9999}
+
+
+def test_core_commands_do_not_import_flask():
+    """The whole point of the optional extra: run/sync/status/doctor stay on requests+pyyaml."""
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; import media_sync_manager.cli; "
+         "print('flask' in sys.modules)"],
+        capture_output=True, text=True, check=True,
+    )
+    assert out.stdout.strip() == "False"
