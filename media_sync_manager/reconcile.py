@@ -1,9 +1,12 @@
 """The reconciliation brain: compute a TargetPlan per target from playlists + the filesystem.
 
 Pure planning — reads state (Jellyfin + filesystem), returns actions, executes nothing (sync.py
-does). Per target: keep each library's input folder mirrored to its playlists (add missing hardlinks,
+does). Per target: keep each library's input folder mirrored to its playlists (add missing inputs,
 remove un-listed ones) and sweep the `sync/` output folder to match (segment-aware), so an item that
 leaves a playlist loses both its input and its transcoded output. Tdarr owns transcode tracking.
+
+Planning is strictly read-only, which is what makes `status` and `--dry-run` safe: the currency check
+is `fsops.is_current`, which stats and reads links but never writes, and needs no input mode.
 """
 
 from __future__ import annotations
@@ -39,8 +42,7 @@ def plan_all(config: Config, jellyfin: JellyfinClient) -> list[TargetPlan]:
 
 
 def plan_target(target: Target, config: Config, jellyfin: JellyfinClient) -> TargetPlan:
-    base = posixpath.join(config.transcode_root, target.name)
-    output_dir = posixpath.join(base, "sync")
+    output_dir = paths.output_dir(config, target.name)
 
     desired: dict[str, AddInput] = {}  # input_path -> AddInput
     keep: set[str] = set()  # {<segment>/<rel_key>}
@@ -49,7 +51,7 @@ def plan_target(target: Target, config: Config, jellyfin: JellyfinClient) -> Tar
     error: str | None = None
 
     for pl in target.playlists:
-        input_seg_dir = posixpath.join(base, pl.segment)
+        input_seg_dir = paths.input_dir(config, target.name, pl.segment)
         library_id = pl.library_id or target.library_id
         try:
             playlist_id = jellyfin.find_playlist(pl.playlist_name)
@@ -87,13 +89,21 @@ def plan_target(target: Target, config: Config, jellyfin: JellyfinClient) -> Tar
     try:
         present = {
             full
-            for seg_dir in {posixpath.join(base, p.segment) for p in target.playlists}
+            for seg_dir in {paths.input_dir(config, target.name, p.segment) for p in target.playlists}
             for full, _rel in fsops.index_files(seg_dir)
         }
     except TransientError as exc:
         return TargetPlan(target=target.name, skipped=(*skipped, str(exc)), error=str(exc))
 
-    adds = tuple(a for ip, a in desired.items() if ip not in present)
+    # Not in the walk -> unambiguously an add. Present -> stat it, because "the path exists" is not
+    # the same as "it works": a hardlink can point at a stale inode after an in-place upgrade, a
+    # symlink can dangle, and a broken link can have been replaced by a plain copy. Those get
+    # repaired rather than trusted forever, which the old lexists() short-circuit never did.
+    adds = tuple(
+        a
+        for ip, a in desired.items()
+        if ip not in present or not fsops.is_current(a.source, ip)
+    )
 
     removes: tuple[RemoveInput, ...] = ()
     deletes: tuple[DeleteOutput, ...] = ()

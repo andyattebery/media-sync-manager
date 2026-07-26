@@ -1,8 +1,7 @@
 """Tdarr v2 REST client. Dumb transport.
 
 Auth: if username/password are configured we POST /api/v2/public/auth/login for a Bearer token;
-otherwise we assume the instance has auth disabled and send no token. `scan_mode` is set by
-`doctor` after probing which mode actually enqueues a single hardlinked file.
+otherwise we assume the instance has auth disabled and send no token.
 """
 
 from __future__ import annotations

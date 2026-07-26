@@ -1,4 +1,4 @@
-"""Shared fixtures: a tmp media/transcode tree (one fs), Config + Target/Playlist/MediaItem factories."""
+"""Shared fixtures: a tmp media/transcode tree, Config + Target/Playlist/MediaItem factories."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from media_sync_manager import fsops
 from media_sync_manager.models import (
     Config,
     JellyfinConfig,
@@ -18,9 +19,24 @@ from media_sync_manager.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_input_mode():
+    """fsops memoises the probe per process. Without this, whichever test probes first fixes the
+    mode for the whole session and the suite becomes order-dependent — several tests monkeypatch
+    os.link to force EXDEV."""
+    fsops._reset_detected()
+    yield
+    fsops._reset_detected()
+
+
 @pytest.fixture
 def env(tmp_path: Path) -> SimpleNamespace:
-    """media/ and transcode/ under one tmp_path (same filesystem -> hardlinks work)."""
+    """media/ and transcode/ as siblings under one tmp_path, so hardlinks work.
+
+    Deliberately *not* the recommended nested layout — real deployments keep transcode_root under
+    media_root so relative symlinks never resolve outside an SMB share. Nothing in the config
+    enforces that, so the fixture exercises the permitted-but-unwise shape.
+    """
     media = tmp_path / "media"
     transcode = tmp_path / "transcode"
     media.mkdir()

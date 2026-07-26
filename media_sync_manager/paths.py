@@ -1,7 +1,7 @@
-"""Path translation between the three coordinate systems and source-relative key derivation.
+"""Path translation between the three coordinate systems, plus the transcode_root dir convention.
 
-Jellyfin-view (MediaSources.Path) --path_maps--> glue-view (where we read/hardlink; media_root
-lives here) --tdarr_path_maps--> Tdarr-view (what scan-files receives).
+Jellyfin-view (MediaSources.Path) --path_maps--> glue-view (where we read originals and create
+inputs; media_root lives here) --tdarr_path_maps--> Tdarr-view (what scan-files receives).
 
 All media paths are POSIX (Linux servers); we normalise to forward slashes throughout.
 """
@@ -50,8 +50,36 @@ def to_glue(jellyfin_path: str, config: Config) -> str:
 
 
 def to_tdarr(glue_path: str, config: Config) -> str:
-    """Translate a glue-view path (an input hardlink) to Tdarr's view for scan-files."""
+    """Translate a glue-view path (an input) to Tdarr's view for scan-files."""
     return remap(glue_path, config.tdarr_path_maps)
+
+
+# --- the transcode_root dir convention ---------------------------------------
+# input  = <transcode_root>/<target>/<segment>/<source_rel>
+# output = <transcode_root>/<target>/sync/<segment>/<source_rel>   (Tdarr's flow writes here)
+
+OUTPUT_SEGMENT = "sync"
+
+
+def target_base(config: Config, target_name: str) -> str:
+    return posixpath.join(config.transcode_root, target_name)
+
+
+def input_dir(config: Config, target_name: str, segment: str) -> str:
+    return posixpath.join(target_base(config, target_name), segment)
+
+
+def output_dir(config: Config, target_name: str) -> str:
+    return posixpath.join(target_base(config, target_name), OUTPUT_SEGMENT)
+
+
+def all_input_dirs(config: Config) -> tuple[str, ...]:
+    """Every distinct segment input dir, in config order. Used by the input-mode probe and doctor."""
+    return tuple(
+        dict.fromkeys(
+            input_dir(config, t.name, pl.segment) for t in config.targets for pl in t.playlists
+        )
+    )
 
 
 def source_rel(glue_path: str, media_root: str) -> str:

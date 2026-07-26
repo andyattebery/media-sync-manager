@@ -46,6 +46,13 @@ def test_parse_valid():
     assert t.playlists[0].library_id is None
 
 
+def test_input_mode_defaults_to_auto_and_validates():
+    assert config_mod.parse(_raw()).input_mode == "auto"
+    assert config_mod.parse(_raw(input_mode="symlink")).input_mode == "symlink"
+    with pytest.raises(ConfigError, match="input_mode"):
+        config_mod.parse(_raw(input_mode="reflink"))
+
+
 def test_per_playlist_library_id_override():
     raw = _raw()
     raw["targets"][0]["playlists"][0]["library_id"] = "lib_anim"

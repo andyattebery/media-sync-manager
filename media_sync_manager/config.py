@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from . import fsops
 from .errors import ConfigError
 from .models import (
     Config,
@@ -121,6 +122,12 @@ def parse(raw: dict[str, Any]) -> Config:
         submit_timeout_seconds=int(td.get("submit_timeout_seconds", 21600)),
     )
 
+    input_mode = str(raw.get("input_mode", fsops.AUTO))
+    if input_mode not in fsops.MODES:
+        raise ConfigError(
+            f"input_mode: must be one of {list(fsops.MODES)}, got {input_mode!r}"
+        )
+
     return Config(
         jellyfin=jellyfin,
         tdarr=tdarr,
@@ -130,6 +137,7 @@ def parse(raw: dict[str, Any]) -> Config:
         path_maps=_path_maps(raw.get("path_maps"), "path_maps", "jellyfin", remote_is_src=True),
         tdarr_path_maps=_path_maps(raw.get("tdarr_path_maps"), "tdarr_path_maps", "tdarr", remote_is_src=False),
         poll_interval_seconds=int(raw.get("poll_interval_seconds", 45)),
+        input_mode=input_mode,
     )
 
 

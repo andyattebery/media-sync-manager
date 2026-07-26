@@ -3,9 +3,18 @@ services:
     build: .
     image: ghcr.io/andyattebery/media-sync-manager:latest
     restart: unless-stopped
+    # config.py hard-fails on a missing ${VAR}, and compose does not forward host env implicitly.
+    environment:
+      - JELLYFIN_API_KEY
+      - TDARR_USER
+      - TDARR_PASS
     volumes:
       - /etc/media-sync-manager/config.yaml:/etc/media-sync-manager/config.yaml:ro
-      # Same mount Jellyfin & Tdarr use, so all three agree on /media/... paths (no path maps) and
-      # media_root + transcode_root are on one filesystem (hardlinks work). transcode_root lives at
-      # /media/Transcode Videos (= /mnt/storage/Transcode Videos on the host).
+      # Same mount Jellyfin & Tdarr use, so all three agree on /media/... paths (no path maps).
+      # transcode_root lives at /media/Transcode Videos (= /mnt/storage/Transcode Videos on the
+      # host), i.e. under media_root.
+      #
+      # Run this container on the host where /mnt/storage is a LOCAL filesystem. Reaching it over
+      # CIFS/SMB works for reads but not for creating inputs: SMB has no symlink-create operation,
+      # and a hardlink into a union pool (mergerfs) fails EXDEV. See `doctor`.
       - /mnt/storage:/media

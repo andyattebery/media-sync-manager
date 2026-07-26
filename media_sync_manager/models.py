@@ -2,7 +2,7 @@
 
 The quality flow ("segment") is chosen by which playlist an item is in, not by genre. The glue keeps
 each Tdarr library's input folder mirrored to its playlist and lets Tdarr own transcode tracking;
-input + output dirs are derived from `transcode_root` by convention.
+input + output dirs are derived from `transcode_root` by convention (see paths.py).
 """
 
 from __future__ import annotations
@@ -81,26 +81,28 @@ class Config:
     path_maps: tuple[PathMap, ...] = ()
     tdarr_path_maps: tuple[PathMap, ...] = ()
     poll_interval_seconds: int = 45
+    # "auto" (probe the filesystem) | "hardlink" | "symlink". See fsops.detect_mode.
+    input_mode: str = "auto"
 
 
 # --- Reconcile plan ----------------------------------------------------------
 
 @dataclass(frozen=True)
 class AddInput:
-    """Hardlink an original into a library input folder, then scan so Tdarr transcodes it."""
+    """Point an input at an original in a library input folder, then scan so Tdarr transcodes it."""
 
     relkey: str  # source_rel minus extension
     segment: str
     playlist: str
     source: str  # glue-view path of the original
-    input_path: str  # glue-view path of the hardlink to create
+    input_path: str  # glue-view path of the input to create (hardlink or symlink)
     tdarr_path: str  # tdarr-view of input_path, passed to scan-files
     library_id: str
 
 
 @dataclass(frozen=True)
 class RemoveInput:
-    """Delete an input hardlink whose item left the playlist (never a real original)."""
+    """Delete an input whose item left the playlist (never a real original)."""
 
     input_path: str
 
@@ -124,3 +126,20 @@ class TargetPlan:
     @property
     def touched(self) -> bool:
         return bool(self.adds or self.removes or self.deletes)
+
+
+@dataclass(frozen=True)
+class CycleResult:
+    """A plan plus what happened when it was applied.
+
+    TargetPlan is built by reconcile *before* anything is executed, so execute-time failures have
+    nowhere to live on it. They land here instead, which is what lets `sync` report (and exit
+    non-zero on) inputs that could not be created.
+    """
+
+    plan: TargetPlan
+    failures: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return self.plan.error is None and not self.failures

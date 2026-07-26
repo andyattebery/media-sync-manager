@@ -1,13 +1,21 @@
-# media_root and transcode_root MUST be on the same filesystem (the glue hardlinks originals into
-# transcode_root; os.link across filesystems fails EXDEV). Here both live under /media.
+# Keep transcode_root UNDER media_root (as below). The glue creates an input in transcode_root
+# pointing at each original; when those are symlinks they are relative, and a relative link between
+# two sibling roots resolves outside an SMB share — where Samba's default `wide links = no` hides the
+# file from Tdarr entirely rather than showing a broken link. `doctor` checks this.
 #
 # Deployment note: /mnt/storage is bind-mounted to /media in the Jellyfin & Tdarr containers. Run
 # this glue container with the SAME mount (-  /mnt/storage:/media), so all three agree on /media/...
-# paths and no path maps are needed.
+# paths and no path maps are needed. Run it where that filesystem is LOCAL: creating a symlink over
+# CIFS/SMB fails (the protocol has no symlink-create operation).
 
 media_root: /media                              # covers /media/Movies, /media/TV Shows, /media/Kids *
-transcode_root: /media/Transcode Videos         # inputs + sync/ outputs; same fs as media_root
+transcode_root: /media/Transcode Videos         # inputs + sync/ outputs; keep under media_root
 poll_interval_seconds: 45
+
+# How inputs are created. Leave unset: `auto` probes the filesystem once at startup and reports the
+# result in `doctor`, because the right answer depends on union/branch behaviour no operator should
+# have to reason about. Set it explicitly only if you want a hard failure instead of a fallback.
+# input_mode: auto                              # auto | hardlink | symlink
 
 jellyfin:
   url: http://jellyfin.example.com:8096
