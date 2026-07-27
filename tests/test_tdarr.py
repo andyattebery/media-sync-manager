@@ -60,7 +60,7 @@ def test_list_libraries_parses_list():
 
 @responses.activate
 def test_post_tolerates_a_plain_text_body():
-    """The the deployment host response, verbatim: scan-files answers `200 text/plain` with the body "OK".
+    """The observed response, verbatim: scan-files answers `200 text/plain` with the body "OK".
 
     `resp.json()` on that raises, and requests makes its JSONDecodeError a RequestException — so it
     was caught by the transport handler and reported as `tdarr POST /api/v2/scan-files failed:

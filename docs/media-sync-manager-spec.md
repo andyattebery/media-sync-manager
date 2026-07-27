@@ -1,5 +1,7 @@
 # media-sync-manager — Specification
 
+The design and why it is this way. To install and run it, see [the user guide](user-guide.md).
+
 ## Context
 
 Jellyfin (libraries sourced from TheTVDB) plus an existing Tdarr transcode setup. Goal: a "Plex-Sync
@@ -218,7 +220,8 @@ process, so an autouse fixture resets it — otherwise suite order would fix the
   makes it immediate. (Not auto-probed — the earlier "doctor probes scan_mode" was never real.)
   **It answers `200 text/plain` with the body `OK`**, not JSON, while `/api/v2/cruddb` on the same
   server answers `application/json` — so the client tolerates a non-JSON 200 and only this endpoint
-  was ever affected. Observed live on the deployment host; see `plans/tdarr-scan-files-blocks-sweep.md`.
+  was ever affected. Observed live against a real Tdarr; see
+  `plans/tdarr-scan-files-blocks-sweep.md`.
 - **Tdarr auth** — token login (`/public/auth/login` → Bearer) or auth-disabled; `doctor` reports.
 - **Library topology** — one library watching both segment folders vs one per segment; `doctor`
   reports what each configured `library_id` watches.

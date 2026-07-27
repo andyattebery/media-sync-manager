@@ -1,6 +1,7 @@
 # Development
 
-How to set up, run, test and debug this project. For *why* it is built the way it is, see
+How to set up, run, test and debug this project. To *use* it rather than work on it, see
+[the user guide](user-guide.md); for *why* it is built the way it is, see
 [the sync spec](media-sync-manager-spec.md) and [the playlist editor design](playlist-editor.md).
 
 ## 1. Setup
@@ -11,7 +12,7 @@ files.
 ```sh
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[web,test]"
-pytest                      # 155 tests, no browser
+pytest                      # 156 tests, no browser
 ```
 
 Browser tests are opt-in because they pull ~150MB of browser binaries:
@@ -73,7 +74,7 @@ jellyfin:
 ```
 
 ```sh
-export JELLYFIN_API_KEY="$(op read 'op://VAULT/Jellyfin/api-key')"
+export JELLYFIN_API_KEY=...          # from your password manager, not from the file
 media-sync-manager --config ./config.yaml web --port 8087
 ```
 
@@ -172,7 +173,7 @@ server around a configurable fake), `editor`, and `open_playlist`.
 thing at a time and checks the named test goes red.
 
 ```sh
-python scripts/mutate.py            # all 21
+python scripts/mutate.py            # all 22
 python scripts/mutate.py 6 14       # just these
 ```
 

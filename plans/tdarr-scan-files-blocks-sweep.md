@@ -10,8 +10,8 @@
 
 # `scan_files` failure aborts removes + the sweep (and Tdarr returns non-JSON)
 
-Found while deploying `1.2.0` to the deployment host. The symlink work is confirmed working — this is the next
-thing in the way.
+Found while deploying `1.2.0` to the poller host. The symlink work is confirmed working — this is the
+next thing in the way.
 
 ## TL;DR
 
@@ -28,14 +28,14 @@ Two bugs, one of which is functional:
 
 ## Evidence
 
-Live, from the deployment host against the real Tdarr (through Traefik):
+Live, from the poller host against a real Tdarr (through a reverse proxy):
 
 ```
 POST https://tdarr.example.com/api/v2/scan-files
   -> http=200  type=text/plain; charset=utf-8  size=2
   -> body: OK
 
-POST https://tdarr.example.com/api/v2/cruddb        # for comparison
+POST https://tdarr.example.com/api/v2/cruddb       # for comparison
   -> http=200  type=application/json; charset=utf-8  size=83946
   -> body: [{"_id":"oWYG1e81j","priority":2,...
 ```
@@ -127,12 +127,12 @@ exits non-zero, without aborting the cycle.
 
 ## Deployment context (for reproduction)
 
-- Running on **the deployment host**, where `/mnt/storage` (the mergerfs pool) is local — required for symlinks.
+- Running on the host where the mergerfs pool is a **local** filesystem — required for symlinks.
 - `input_mode: symlink` pinned explicitly; `doctor` reports
   `input mode: symlink (set explicitly; not probed)`.
-- Tdarr runs on a different host and reaches the media over CIFS; `tdarr.url` is
-  `https://tdarr.example.com` (via Traefik). The plain-text `OK` comes from Tdarr itself, not Traefik —
-  the same request to `cruddb` through the same path returns `application/json`.
+- Tdarr runs on a different host and reaches the media over CIFS, with `tdarr.url` pointing at it
+  through a reverse proxy. The plain-text `OK` comes from Tdarr itself, not the proxy — the same
+  request to `cruddb` through the same path returns `application/json`.
 - Folder Watch was disabled during this test and is being enabled; that changes pickup, but not this
   bug, since the abort happens before removes/deletes either way.
 

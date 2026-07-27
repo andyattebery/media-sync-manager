@@ -21,7 +21,7 @@ until runtime.
 
 ## What happened (concrete repro)
 Config: one target `tablet`, playlists mapped to segments `2d-animation` and `standard`.
-Ran `sync --once` on a playlist of Meadowlark episodes.
+Ran `sync --once` on a playlist of one show's episodes.
 
 First hardlink attempted:
 ```

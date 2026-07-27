@@ -26,7 +26,8 @@ services:
     build: .
     image: ghcr.io/andyattebery/media-sync-manager:latest
     restart: unless-stopped
-    command: ["web", "--config", "/etc/media-sync-manager/config.yaml", "--port", "8087"]
+    # `--config` before the subcommand: it is a top-level argument, and `web --config …` exits 2.
+    command: ["--config", "/etc/media-sync-manager/config.yaml", "web", "--port", "8087"]
     ports:
       # LAN only — the editor has NO authentication. Never port-forward this.
       - "8087:8087"

@@ -96,7 +96,7 @@ def test_symlink_mode_creates_symlinks(env):
 
 
 def test_scan_failure_does_not_abort_removes_or_sweep(env):
-    """The reported bug: on the deployment host a cycle created 154 symlinks, then enqueued 0 scans and ran 0
+    """The reported bug: a live cycle created 154 symlinks, then enqueued 0 scans and ran 0
     removes and 0 deletes, because an unguarded scan_files raised straight out of execute().
 
     Folder Watch is what actually retires a deleted input; scan-files only makes pickup of new ones

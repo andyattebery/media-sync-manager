@@ -8,7 +8,7 @@
 # paths and no path maps are needed. Run it where that filesystem is LOCAL: creating a symlink over
 # CIFS/SMB fails (the protocol has no symlink-create operation).
 
-media_root: /media                              # covers /media/Movies, /media/TV Shows, /media/Kids *
+media_root: /media                              # covers /media/Movies, /media/TV Shows, ...
 transcode_root: /media/Transcode Videos         # inputs + sync/ outputs; keep under media_root
 poll_interval_seconds: 45
 

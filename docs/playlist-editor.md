@@ -1,10 +1,12 @@
 # Playlist editor — Design
 
+Why the editor is built this way. To *use* it, see [the user guide](user-guide.md) §9.
+
 ## Context
 
-Jellyfin's own web UI removes playlist items one at a time. On the real "Sync - tablet - 2D
-Animation" playlist — 154 Meadowlark episodes across 3 seasons — that is unusable for the ordinary case of
-"we've watched season 1, take it off the iPad".
+Jellyfin's own web UI removes playlist items one at a time. On a real "Sync - tablet - 2D Animation"
+playlist — 154 episodes of one show across 3 seasons — that is unusable for the ordinary case of
+"we've watched season 1, take it off the tablet".
 
 This is a small web page served by the same package: pick a playlist, see it grouped show → season →
 episode, bulk-select, remove. It edits the **input** to the sync engine, so it sits one step earlier
@@ -65,7 +67,7 @@ does not shrink the list.
 
 **API-key authorisation on that endpoint is version-dependent.** `release-10.10.z` resolves
 `User.GetUserId()` (empty for an API key) and returns `Forbid()`; an API-key branch landed for 10.11,
-but jellyfin#12999 tracks it still failing on some builds. **Probed on 10.11.11 (`the Jellyfin server`): 204.**
+but jellyfin#12999 tracks it still failing on some builds. **Probed on 10.11.11: 204.**
 Re-run after any Jellyfin upgrade — the probe is non-destructive because an entry id of all zeroes
 matches nothing:
 
@@ -199,7 +201,7 @@ will reintroduce a bug that has already been fixed once.
 
 ## 9. Tests
 
-`pytest` runs 155 unit tests and starts no browser. Browser tests are marked `e2e` and excluded by
+`pytest` runs 156 unit tests and starts no browser. Browser tests are marked `e2e` and excluded by
 `addopts = "-m 'not e2e' --strict-markers"`, because `importorskip` alone only skips when Playwright
 is *absent* — which is never true on a machine working on this feature. CI runs `pytest -m e2e -v` as
 a separate job; a path-based invocation would collect the directory and deselect everything, running
@@ -227,7 +229,7 @@ therefore share ids — `linked_playlist()` builds them together and says so.
 
 "Every test has an assertion" is not "every test constrains the code". Deliberate breakages are
 paired with the test that must catch each, in `scripts/mutate.py`; the pairing is the durable part.
-**Current result: 21/21 caught** — that count spans the whole package, not just the editor, since
+**Current result: 22/22 caught** — that count spans the whole package, not just the editor, since
 five were added with the Tdarr scan-files fix.
 
 Getting there found three problems that reading had not:

@@ -172,6 +172,33 @@ def test_web_passes_host_and_port_through(monkeypatch):
     assert rc == 0 and seen == {"host": "1.2.3.4", "port": 9999}
 
 
+def test_shipped_container_commands_parse():
+    """The Dockerfile CMD and the compose `command:` must be parseable by our own parser.
+
+    `--config` is a top-level argument, so `run --config …` and `web --config …` are argparse errors
+    that exit 2 before anything runs — i.e. neither container could start, and `docker compose up -d`
+    was broken for both services. Nothing caught it because every documented one-shot uses
+    `docker compose run --rm … <cmd>`, which overrides CMD and falls back to the argparse default
+    path. Parsed from the real files rather than a copy, so the two cannot drift.
+    """
+    import json
+    import re
+
+    root = Path(__file__).resolve().parent.parent
+
+    dockerfile = (root / "Dockerfile").read_text()
+    cmd = json.loads(re.search(r"^CMD (\[.*\])$", dockerfile, re.M).group(1))
+
+    compose = (root / "docker-compose.yml").read_text()
+    commands = [json.loads(m) for m in re.findall(r"^\s*command:\s*(\[.*\])$", compose, re.M)]
+
+    assert cmd, "no CMD found in the Dockerfile"
+    assert commands, "no command: found in docker-compose.yml"
+    for argv in [cmd, *commands]:
+        # parse_args calls sys.exit(2) on an unrecognised argument.
+        cli.build_parser().parse_args(argv)
+
+
 def test_core_commands_do_not_import_flask():
     """The whole point of the optional extra: run/sync/status/doctor stay on requests+pyyaml."""
     out = subprocess.run(

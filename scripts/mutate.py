@@ -22,6 +22,7 @@ PL = ROOT / "media_sync_manager/playlists.py"
 SY = ROOT / "media_sync_manager/sync.py"
 TD = ROOT / "media_sync_manager/tdarr.py"
 CLI = ROOT / "media_sync_manager/cli.py"
+DOCKERFILE = ROOT / "Dockerfile"
 
 # (id, file, find, replace, test selector, marker)
 MUTATIONS = [
@@ -154,6 +155,15 @@ MUTATIONS = [
      'shown = "; ".join(p for p in (detail, fail_detail if not passed else "") if p)',
      'shown = "; ".join(p for p in (detail, fail_detail) if p)',
      "test_doctor_does_not_explain_a_failure_that_did_not_happen", "unit"),
+    # Restores the shipped-broken argument order in BOTH containers: --config is top-level, so this
+    # is an argparse error and neither service starts.
+    ("21 --config after subcommand", DOCKERFILE,
+     'CMD ["--config", "/etc/media-sync-manager/config.yaml", "run"]',
+     'CMD ["run", "--config", "/etc/media-sync-manager/config.yaml"]',
+     "test_shipped_container_commands_parse", "unit",
+     None, (ROOT / "docker-compose.yml",
+            'command: ["--config", "/etc/media-sync-manager/config.yaml", "web", "--port", "8087"]',
+            'command: ["web", "--config", "/etc/media-sync-manager/config.yaml", "--port", "8087"]')),
 ]
 
 
