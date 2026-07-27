@@ -40,8 +40,13 @@ jobs:
       - run: pip install ".[web,test,e2e]"
       - run: playwright install --with-deps chromium
       # `-m e2e`, NOT `pytest tests/e2e`: the default addopts is `-m 'not e2e'`, so a path-based
-      # invocation would collect the directory and deselect every test in it — a green job that
-      # ran nothing. Fail explicitly if the selection is empty.
+      # invocation deselects every test it just collected and runs nothing.
+      #
+      # It would NOT pass silently, though — that fear was stated in three places here and is
+      # unfounded. _pytest/main.py::_main returns ExitCode.NO_TESTS_COLLECTED (5) when
+      # session.testscollected == 0, and deselected items are not counted, so ANY empty selection
+      # exits 5. An empty run already reddens this job; a collected-count guard on top is pure
+      # duplication (one was written and reverted). Use `-m e2e` because it is explicit.
       - run: pytest -m e2e -v
 
   docker:

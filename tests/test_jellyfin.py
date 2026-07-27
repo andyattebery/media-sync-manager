@@ -136,8 +136,11 @@ def test_playlist_entries_unaddressable_when_both_ids_missing():
 
 @responses.activate
 def test_remove_sends_comma_joined_entry_ids_and_survives_204_empty_body():
-    """204 with an empty body: resp.json() would raise JSONDecodeError, which is NOT a
-    RequestException and would escape as an uncaught error rather than a TransientError."""
+    """204 with an empty body: the `if resp.content` guard skips a decode that would only raise.
+
+    It would NOT escape uncaught — requests makes JSONDecodeError a RequestException — but it would
+    be relabelled a transport failure, which is exactly how the Tdarr scan-files bug hid.
+    """
     responses.add(responses.DELETE, "http://jf/Playlists/p1/Items", status=204, body="")
     result = JellyfinClient(CFG).remove_playlist_entries("p1", ["a", "b"])
     assert (result.requested, result.removed, result.failed) == (2, 2, 0)

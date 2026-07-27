@@ -1,8 +1,8 @@
 """The CSS contract, enforced instead of exhorted.
 
-With a framework the failure mode is not duplicated declarations — Pico supplies the baseline — it
-is specificity war with vendor rules, then !important when that stops working. These assertions are
-binary and run in CI, so none of it depends on anyone remembering to check.
+With a framework the failure mode is not duplicated declarations — Bootstrap supplies the baseline —
+it is specificity war with vendor rules, then !important when that stops working. These assertions
+are binary and run in CI, so none of it depends on anyone remembering to check.
 
 Comments are stripped first: a rule that merely *mentions* !important is documentation, not a
 violation, and greps that cannot tell the difference measure prose.

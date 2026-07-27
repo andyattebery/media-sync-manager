@@ -126,10 +126,10 @@ fixture data with no credentials, the test layers, mutation testing, and debuggi
 
 ```sh
 pip install -e ".[web,test]"
-pytest                       # 148 tests, no browser
+pytest                       # 155 tests, no browser
 
 # browser tests for the editor UI (opt-in: ~150MB of browser binaries)
 pip install -e ".[e2e]"
 playwright install chromium
-pytest -m e2e                # must report a non-zero collected count
+pytest -m e2e                # 76 browser tests
 ```

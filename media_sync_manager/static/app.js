@@ -24,7 +24,7 @@ const state = {
                             // excludes unaddressable rows and collapses duplicates
   boxes: new Map(),         // show|season key -> checkbox element
   itemBoxes: new Map(),     // entry_id -> checkbox element[]  (ARRAY: duplicates share an id)
-  openKeys: new Set(),      // expanded <details>, preserved across a refresh
+  openKeys: new Set(),      // expanded show/season keys, preserved across a refresh
   busy: false,
 };
 
@@ -437,19 +437,16 @@ el.tree.addEventListener("change", (ev) => {
 });
 
 el.tree.addEventListener("click", (ev) => {
-  // Every checkbox and label click bubbles here too; only ⤒ presses are ours.
+  // Every checkbox and label click bubbles here too; only range-button presses are ours.
   const btn = ev.target.closest('[data-role="upto"]');
   if (!btn) return;
   ev.preventDefault();
   selectUpTo(btn.dataset.id);
 });
 
-// `toggle` does not bubble, so listen in the capture phase.
-el.tree.addEventListener("toggle", (ev) => {
-  const key = ev.target.dataset && ev.target.dataset.key;
-  if (!key) return;
-  if (ev.target.open) state.openKeys.add(key); else state.openKeys.delete(key);
-}, true);
+// No `toggle` listener: that event fires only on <details>, and the tree is Bootstrap accordions.
+// render() reads expansion straight from the DOM instead — see the comment there for why the
+// collapse events are not trusted either.
 
 el.selectAll.addEventListener("change", () => toggleBucket(state.allIds));
 el.playlist.addEventListener("change", () => loadItems(el.playlist.value));

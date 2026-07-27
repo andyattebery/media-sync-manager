@@ -4,6 +4,7 @@ import errno
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from fakes import FakeJellyfinClient, FakeTdarrClient
@@ -90,6 +91,38 @@ def test_doctor_flags_transcode_root_outside_media_root(
     # conftest deliberately puts media/ and transcode/ side by side.
     assert any("FAIL" in ln and "transcode_root is under media_root" in ln for ln in lines)
     assert rc == 1
+
+
+def test_doctor_does_not_explain_a_failure_that_did_not_happen(
+    env, make_target, make_playlist, make_config, monkeypatch
+):
+    """An `[OK ]` line must not print the reason the check would have failed.
+
+    doctor used to render `[OK ] transcode_root is under media_root: '…' is outside '…', so a
+    relative symlink resolves outside an SMB share…` — a passing check explaining the problem it did
+    not find. Blanket-suppressing detail on success is the wrong fix: four of the ten check() calls
+    are informative when they pass, so this also asserts `input mode` keeps its detail.
+    """
+    monkeypatch.setattr(os, "link", _exdev)  # force symlink mode, the only mode that runs the check
+    nested = Path(env.media) / "transcode"   # conftest puts them side by side; nest it here
+    nested.mkdir()
+    config = replace(make_config([_target(make_target, make_playlist)]), transcode_root=str(nested))
+    # A library that actually watches the input dir, so every check passes and rc is 0 — otherwise
+    # the assertion below would pass on a doctor that failed for an unrelated reason.
+    td = FakeTdarrClient(
+        libraries=[{"_id": "lib_iphone", "folder": str(nested / "iphone" / "standard")}]
+    )
+    lines: list[str] = []
+
+    rc = cli.cmd_doctor(config, _jf([]), td, out=lines.append)
+
+    under = [ln for ln in lines if "transcode_root is under media_root" in ln]
+    assert under and under[0].startswith("[OK ]"), under
+    assert "wide links" not in under[0], f"an [OK ] line explained a failure: {under[0]!r}"
+    assert under[0].rstrip() == "[OK ] transcode_root is under media_root"
+    # The other direction: detail that IS informative on success must survive.
+    assert any(ln.startswith("[OK ] input mode") and "symlink" in ln for ln in lines)
+    assert rc == 0
 
 
 def test_status_is_read_only(env, make_target, make_playlist, make_config, write_source, make_episode):

@@ -19,6 +19,9 @@ JS = ROOT / "media_sync_manager/static/app.js"
 JF = ROOT / "media_sync_manager/jellyfin.py"
 WEB = ROOT / "media_sync_manager/web.py"
 PL = ROOT / "media_sync_manager/playlists.py"
+SY = ROOT / "media_sync_manager/sync.py"
+TD = ROOT / "media_sync_manager/tdarr.py"
+CLI = ROOT / "media_sync_manager/cli.py"
 
 # (id, file, find, replace, test selector, marker)
 MUTATIONS = [
@@ -84,6 +87,73 @@ MUTATIONS = [
     ("15 sort key drops ids", PL,
      "        e.playlist_item_id,\n        e.item_id,\n", "",
      "test_identical_titles_sort_deterministically", "unit"),
+
+    # --- the scan-files / sweep abort (plans/tdarr-scan-files-blocks-sweep.md) ---
+    #
+    # 16 and 17 must be whole-block replacements. Swapping `try:` for `if True:` in place leaves the
+    # `except` clause orphaned, which is a SyntaxError — the test then goes red for the wrong reason
+    # and the mutation certifies nothing.
+    ("16 scan not guarded", SY,
+     "    for library_id, tdarr_paths in by_library.items():\n"
+     "        # Guarded per library, INSIDE the loop. One unreachable library must not silence the scans\n"
+     "        # for every other library behind it.\n"
+     "        try:\n"
+     "            tdarr.scan_files(library_id, tdarr_paths)\n"
+     "        except (MediaSyncError, OSError) as exc:\n"
+     "            _log.warning(\n"
+     '                "target %s: scan-files lib=%s failed, Folder Watch will pick up: %s",\n'
+     "                plan.target, library_id, exc,\n"
+     "            )\n"
+     '            failures.append(f"scan-files lib={library_id} (Folder Watch will pick up): {exc}")\n',
+     "    for library_id, tdarr_paths in by_library.items():\n"
+     "        tdarr.scan_files(library_id, tdarr_paths)\n",
+     "test_scan_failure_does_not_abort_removes_or_sweep", "unit"),
+    # The plausible wrong version, not the absence of the feature: wrapping the WHOLE loop still
+    # reports the failure and still protects the removes — it just silently drops every library
+    # queued behind the one that failed.
+    ("17 guard outside loop", SY,
+     "    for library_id, tdarr_paths in by_library.items():\n"
+     "        # Guarded per library, INSIDE the loop. One unreachable library must not silence the scans\n"
+     "        # for every other library behind it.\n"
+     "        try:\n"
+     "            tdarr.scan_files(library_id, tdarr_paths)\n"
+     "        except (MediaSyncError, OSError) as exc:\n",
+     "    try:\n"
+     "        for library_id, tdarr_paths in by_library.items():\n"
+     "            tdarr.scan_files(library_id, tdarr_paths)\n"
+     "    except (MediaSyncError, OSError) as exc:\n",
+     "test_one_library_failing_still_scans_the_others", "unit"),
+    ("18 unlink not guarded", SY,
+     "    for path in to_remove:\n"
+     "        try:\n"
+     "            fsops.unlink(path)\n"
+     "        except OSError as exc:\n"
+     '            _log.error("target %s: %s %s: %s", target, kind, path, exc)\n'
+     '            failures.append(f"{kind} {path}: {exc}")\n',
+     "    for path in to_remove:\n"
+     "        fsops.unlink(path)\n",
+     "test_a_failed_unlink_does_not_abort_the_rest", "unit"),
+    # Restores the pre-fix code exactly: decode unconditionally, let the JSONDecodeError fall
+    # through to the RequestException handler, and report a successful scan as a transport failure.
+    ("19 non-JSON body raises", TD,
+     "                try:\n"
+     "                    return resp.json()\n"
+     "                except ValueError:\n"
+     "                    # A 200 is not a JSON 200. /api/v2/scan-files answers `200 text/plain` with the\n"
+     "                    # body \"OK\" regardless of the Accept header set in __init__, while /cruddb on the\n"
+     "                    # same server answers JSON — which is why only the scan looked like a failure.\n"
+     "                    #\n"
+     "                    # Catch ValueError, not requests.exceptions.JSONDecodeError: the latter is also a\n"
+     "                    # RequestException, so without this the decode error falls through to the handler\n"
+     "                    # below and is reported as a transport failure.\n"
+     '                    _log.debug("tdarr POST %s returned non-JSON: %r", path, resp.text[:80])\n'
+     "                    return resp.text\n",
+     "                return resp.json()\n",
+     "test_post_tolerates_a_plain_text_body", "unit"),
+    ("20 fail_detail always shown", CLI,
+     'shown = "; ".join(p for p in (detail, fail_detail if not passed else "") if p)',
+     'shown = "; ".join(p for p in (detail, fail_detail) if p)',
+     "test_doctor_does_not_explain_a_failure_that_did_not_happen", "unit"),
 ]
 
 
@@ -99,6 +169,14 @@ selected = [m for m in MUTATIONS if not wanted or m[0].split()[0] in wanted]
 if wanted and not selected:
     sys.exit(f"no mutation matches {sorted(wanted)}; ids are "
              f"{[m[0].split()[0] for m in MUTATIONS]}")
+
+# Every file any selected mutation touches, as it was before we started. The restore check at the
+# bottom compares against this.
+ORIGINALS = {}
+for _m in selected:
+    for _p in (_m[1], _m[7][0] if len(_m) > 7 and _m[7] else None):
+        if _p is not None and _p not in ORIGINALS:
+            ORIGINALS[_p] = _p.read_text()
 
 print(f"{'mutation':28} {'expected test':52} result")
 print("-" * 96)
@@ -147,12 +225,15 @@ if stale:
     for m in stale:
         print(f"  - {m}")
 
-dirty = subprocess.run(["git", "status", "--porcelain", "media_sync_manager"],
-                       cwd=ROOT, capture_output=True, text=True).stdout.strip()
-tracked_dirty = [ln for ln in dirty.splitlines() if not ln.startswith("??")]
-if tracked_dirty:
+# Compare content against the snapshot taken before the run, NOT `git status`: a mutation campaign
+# is normally run *while* editing the code it mutates, so a dirty tree is the expected state and
+# using git here reported "restore failed" on every real run.
+corrupted = sorted(str(p.relative_to(ROOT)) for p, before in ORIGINALS.items()
+                   if p.read_text() != before)
+if corrupted:
     print("\n*** SOURCE LEFT MUTATED — restore failed: ***")
-    print("\n".join(tracked_dirty))
+    for name in corrupted:
+        print(f"  {name}")
     sys.exit(2)
 
 sys.exit(1 if (survivors or stale) else 0)

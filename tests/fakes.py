@@ -103,16 +103,31 @@ class FakeJellyfinClient:
 
 class FakeTdarrClient:
     def __init__(
-        self, libraries: list[dict] | None = None, *, scan_mode: str = "scanFolderWatcher"
+        self,
+        libraries: list[dict] | None = None,
+        *,
+        scan_mode: str = "scanFolderWatcher",
+        scan_error: Exception | None = None,
+        scan_error_for: set[str] | None = None,
     ) -> None:
         self.scan_mode = scan_mode
         self._libraries = libraries or []
         self.scans: list[tuple[str, list[str], str]] = []
+        # scan_files could not fail, so the guard around it was unreachable from a test rather than
+        # merely untested. Named after find_error/find_error_for on FakeJellyfinClient: the *_for
+        # variant fails one named library, which is what pins the guard INSIDE the per-library loop
+        # instead of around it.
+        self._scan_error = scan_error
+        self._scan_error_for = scan_error_for or set()
 
     def list_libraries(self) -> list[dict]:
         return list(self._libraries)
 
     def scan_files(self, library_id: str, paths: list[str], mode: str | None = None) -> None:
+        if self._scan_error is not None or library_id in self._scan_error_for:
+            raise self._scan_error or TransientError(
+                f"tdarr POST /api/v2/scan-files failed: down for {library_id!r}"
+            )
         self.scans.append((library_id, list(paths), mode or self.scan_mode))
 
 

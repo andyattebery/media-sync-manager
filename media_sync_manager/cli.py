@@ -31,7 +31,9 @@ def cmd_sync(
         for line in sync.describe(result.plan):
             out(line)
         for failure in result.failures:
-            out(f"[{result.plan.target}] FAILED input: {failure}")
+            # Not "FAILED input": failures now come from four phases (input, scan-files, remove
+            # input, delete output) and each message names its own.
+            out(f"[{result.plan.target}] FAILED: {failure}")
     return 0 if all(r.ok for r in results) else 1
 
 
@@ -71,10 +73,14 @@ def cmd_doctor(
 ) -> int:
     ok = True
 
-    def check(label: str, passed: bool, detail: str = "") -> None:
+    def check(label: str, passed: bool, detail: str = "", *, fail_detail: str = "") -> None:
         nonlocal ok
         ok = ok and passed
-        out(f"[{'OK ' if passed else 'FAIL'}] {label}{': ' + detail if detail else ''}")
+        # `detail` prints either way — the probed input mode and what a library actually watches are
+        # worth seeing when they pass. `fail_detail` explains a failure and is suppressed on success,
+        # so an [OK ] line never reads as an explanation of a problem that did not happen.
+        shown = "; ".join(p for p in (detail, fail_detail if not passed else "") if p)
+        out(f"[{'OK ' if passed else 'FAIL'}] {label}{': ' + shown if shown else ''}")
 
     # Jellyfin reachability + auth + playlists exist (one check per distinct playlist).
     for name in dict.fromkeys(pl.playlist_name for t in config.targets for pl in t.playlists):
@@ -133,9 +139,11 @@ def cmd_doctor(
         check(
             "transcode_root is under media_root",
             _transcode_under_media(config),
-            f"{config.transcode_root!r} is outside {config.media_root!r}, so a relative symlink "
-            "between them resolves outside an SMB share; Samba's default 'wide links = no' then "
-            "hides the file from Tdarr entirely rather than showing a broken link",
+            fail_detail=(
+                f"{config.transcode_root!r} is outside {config.media_root!r}, so a relative symlink "
+                "between them resolves outside an SMB share; Samba's default 'wide links = no' then "
+                "hides the file from Tdarr entirely rather than showing a broken link"
+            ),
         )
         out("NOTE: symlink inputs rely on Tdarr reaching the media over a share that resolves links")
         out("      server-side (SMB/NFS), where it sees plain files. A Tdarr with local filesystem")

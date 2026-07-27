@@ -1,0 +1,48 @@
+# Dockerfile does `COPY . /src`, so without this the whole working tree enters the build context.
+# A local .venv alone is ~175MB, and it lands in the COPY layer of every `docker compose up --build`.
+# CI builds from a clean checkout, so this only ever bit local builds — which README and
+# docs/development.md both tell you to run.
+#
+# `pip install "/src[web]"` needs pyproject.toml and media_sync_manager/ (including static/, via
+# [tool.setuptools.package-data]). Nothing else. Checked: no setuptools_scm, so dropping .git is
+# safe, and packages = ["media_sync_manager"] means tests/ was never packaged anyway.
+#
+# NOTE: these patterns are NOT .gitignore patterns. Docker matches each against the whole relative
+# path with Go's filepath.Match, so a bare `__pycache__` matches ONLY a root-level one — nested
+# copies need the explicit `**/` form. Hence the doubled entries below; they are not redundant.
+
+# Virtual environments
+.venv
+venv
+
+# VCS + CI metadata
+.git
+.github
+.gitignore
+
+# Python build / install artifacts
+__pycache__
+**/__pycache__
+*.py[cod]
+**/*.py[cod]
+*.egg-info
+**/*.egg-info
+build
+dist
+
+# Test / tooling caches
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Not installed by the wheel
+tests
+docs
+plans
+scripts
+*.md
+
+# Local secrets / config — never bake these into an image
+config.yaml
+.env

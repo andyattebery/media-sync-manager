@@ -68,7 +68,18 @@ class TdarrClient:
             resp = self._session.post(url, json=payload, timeout=self._cfg.request_timeout_seconds)
             resp.raise_for_status()
             if resp.content:
-                return resp.json()
+                try:
+                    return resp.json()
+                except ValueError:
+                    # A 200 is not a JSON 200. /api/v2/scan-files answers `200 text/plain` with the
+                    # body "OK" regardless of the Accept header set in __init__, while /cruddb on the
+                    # same server answers JSON — which is why only the scan looked like a failure.
+                    #
+                    # Catch ValueError, not requests.exceptions.JSONDecodeError: the latter is also a
+                    # RequestException, so without this the decode error falls through to the handler
+                    # below and is reported as a transport failure.
+                    _log.debug("tdarr POST %s returned non-JSON: %r", path, resp.text[:80])
+                    return resp.text
             return None
         except requests.RequestException as exc:
             raise TransientError(f"tdarr POST {path} failed: {exc}") from exc

@@ -109,8 +109,11 @@ class JellyfinClient:
         try:
             resp = self._session.request(method, url, params=params, timeout=self._timeout)
             resp.raise_for_status()
-            # The removal endpoint answers 204 with an empty body; resp.json() would raise
-            # JSONDecodeError, which is NOT a RequestException and would escape uncaught.
+            # The removal endpoint answers 204 with an empty body, so skip the decode rather than
+            # raise and catch for nothing. (An earlier comment here claimed JSONDecodeError is not a
+            # RequestException and would escape uncaught — it is one, via InvalidJSONError, so it
+            # would have been caught and mislabelled a transport failure. Same wrong assumption, in
+            # the opposite direction, cost the Tdarr client a real bug: see tdarr.py::_post.)
             return resp.json() if resp.content else None
         except requests.RequestException as exc:
             raise TransientError(f"jellyfin {method} {path} failed: {exc}") from exc

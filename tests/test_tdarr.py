@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import responses
 
+from media_sync_manager.errors import TransientError
 from media_sync_manager.models import TdarrConfig
 from media_sync_manager.tdarr import TdarrClient
 
@@ -51,3 +53,40 @@ def test_list_libraries_parses_list():
     )
     libs = TdarrClient(TdarrConfig(url="http://td")).list_libraries()
     assert libs[0]["_id"] == "lib1"
+
+
+# --- a 200 is not a JSON 200 -------------------------------------------------
+
+
+@responses.activate
+def test_post_tolerates_a_plain_text_body():
+    """The the deployment host response, verbatim: scan-files answers `200 text/plain` with the body "OK".
+
+    `resp.json()` on that raises, and requests makes its JSONDecodeError a RequestException — so it
+    was caught by the transport handler and reported as `tdarr POST /api/v2/scan-files failed:
+    Expecting value: line 1 column 1 (char 0)`, a successful scan indistinguishable from a dead
+    server. That spurious failure is what aborted every remove and the whole sweep.
+    """
+    responses.add(
+        responses.POST,
+        "http://td/api/v2/scan-files",
+        body="OK",
+        content_type="text/plain; charset=utf-8",
+    )
+    TdarrClient(TdarrConfig(url="http://td")).scan_files("lib1", ["/x/y.mkv"])  # must not raise
+
+
+@responses.activate
+def test_list_libraries_survives_a_non_json_body():
+    """The other _post caller. A str is neither list nor dict, so it falls through to []."""
+    responses.add(responses.POST, "http://td/api/v2/cruddb", body="OK", content_type="text/plain")
+    assert TdarrClient(TdarrConfig(url="http://td")).list_libraries() == []
+
+
+@responses.activate
+def test_post_still_raises_on_an_http_error():
+    """Guards the new `except ValueError` against being widened into swallowing real failures:
+    raise_for_status fires before any decode, so a 500 is still a TransientError."""
+    responses.add(responses.POST, "http://td/api/v2/scan-files", status=500, body="nope")
+    with pytest.raises(TransientError):
+        TdarrClient(TdarrConfig(url="http://td")).scan_files("lib1", ["/x/y.mkv"])

@@ -199,11 +199,12 @@ will reintroduce a bug that has already been fixed once.
 
 ## 9. Tests
 
-`pytest` runs 148 unit tests and starts no browser. Browser tests are marked `e2e` and excluded by
+`pytest` runs 155 unit tests and starts no browser. Browser tests are marked `e2e` and excluded by
 `addopts = "-m 'not e2e' --strict-markers"`, because `importorskip` alone only skips when Playwright
 is *absent* — which is never true on a machine working on this feature. CI runs `pytest -m e2e -v` as
-a separate job; a path-based invocation would collect the directory, deselect everything and go green
-having run nothing.
+a separate job; a path-based invocation would collect the directory and deselect everything, running
+nothing. (It would exit **5**, not go green — this doc claimed otherwise until someone read pytest's
+`_main`; see [development.md §4](development.md).)
 
 - **Unit** — client parsing/chunking/error paths (`responses`), grouping across the case set, route
   status codes, the CSS contract.
@@ -224,9 +225,10 @@ therefore share ids — `linked_playlist()` builds them together and says so.
 
 ### The suite is mutation-checked
 
-"Every test has an assertion" is not "every test constrains the code". Sixteen deliberate breakages
-are paired with the test that must catch each; the script lives in the session scratchpad and the
-pairing is the durable part. **Current result: 16/16 caught.**
+"Every test has an assertion" is not "every test constrains the code". Deliberate breakages are
+paired with the test that must catch each, in `scripts/mutate.py`; the pairing is the durable part.
+**Current result: 21/21 caught** — that count spans the whole package, not just the editor, since
+five were added with the Tdarr scan-files fix.
 
 Getting there found three problems that reading had not:
 

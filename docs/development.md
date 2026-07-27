@@ -11,7 +11,7 @@ files.
 ```sh
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[web,test]"
-pytest                      # 148 tests, no browser
+pytest                      # 155 tests, no browser
 ```
 
 Browser tests are opt-in because they pull ~150MB of browser binaries:
@@ -127,9 +127,23 @@ which is never true on a machine working on this feature. The marker exclusion i
 default run fast.
 
 **CI runs `pytest -m e2e`, never `pytest tests/e2e`.** A path-based invocation collects the directory
-and then deselects every test in it under the default `addopts` — a green job that ran nothing.
-`--strict-markers` turns a typo'd marker into an error rather than a silent skip. **Always check the
-collected count is non-zero.**
+and then deselects every test in it under the default `addopts`, running nothing.
+`--strict-markers` turns a typo'd marker into an error rather than a silent skip.
+
+It does **not** go silently green, though, and this doc claimed otherwise until someone checked
+pytest instead of reasoning about it. `_pytest/main.py::_main` ends with:
+
+```python
+elif session.testscollected == 0:
+    return ExitCode.NO_TESTS_COLLECTED      # == 5
+```
+
+Deselected items are dropped from `testscollected`, so *any* empty selection exits 5 — deselection
+included, not just "no files matched". `pytest tests/e2e` and a run whose markers went missing both
+redden CI on their own.
+
+So do not add a collected-count guard to the CI step; one was written and reverted as pure
+duplication. Prefer `-m e2e` because it says what it means, not because the alternative is silent.
 
 ## 5. Test doubles
 
@@ -158,7 +172,7 @@ server around a configurable fake), `editor`, and `open_playlist`.
 thing at a time and checks the named test goes red.
 
 ```sh
-python scripts/mutate.py            # all 16
+python scripts/mutate.py            # all 21
 python scripts/mutate.py 6 14       # just these
 ```
 
@@ -250,3 +264,12 @@ Each of these cost real time:
   reading `scrollY` on the next line gives the old value. Use `behavior: 'instant'` in tests.
 - **Jellyfin returns 204 for a removal that matched nothing.** Acceptance is not proof; the UI
   re-reads and reports a count delta. Do not "simplify" that away.
+- **A 200 is not a JSON 200, and a decode bug arrives disguised as a network failure.** Tdarr's
+  `/api/v2/scan-files` answers `200 text/plain "OK"` while `/cruddb` answers JSON, so `resp.json()`
+  raised on a call that had actually succeeded. `requests` makes its own `JSONDecodeError` a
+  `RequestException` (via `InvalidJSONError`) *and* a `ValueError` — so the existing transport
+  handler swallowed it and relabelled a working scan "tdarr POST failed". Catch `ValueError` for a
+  decode, and never assume a wrapper only catches what you meant it to.
+- **A best-effort call must not sit on the path to a destructive one.** That mislabelled failure
+  escaped `execute()` before the removes and the sweep, so a cycle linked 154 files and retired
+  none. Anything advisory gets its own guard, inside its own loop.

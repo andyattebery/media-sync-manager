@@ -60,7 +60,14 @@ def open_playlist(page):
     def _open(editor: Editor, name: str = fixtures.NAMES[fixtures.CASE_SET_ID]):
         page.goto(editor.url, wait_until="networkidle")
         page.select_option("#playlist", label=name)
-        page.wait_for_function("() => document.querySelector('#toolbar') && !document.querySelector('#toolbar').hidden")
+        # Wait for the tree, not for `#toolbar.hidden`. The toolbar carries no `hidden` attribute —
+        # app.js toggles .d-none/.d-flex, because Bootstrap's display utilities are !important and
+        # beat [hidden] — so `.hidden` is permanently false and that condition was already true at
+        # first paint, before a playlist was chosen. Measured: it returned instantly with the
+        # toolbar invisible, zero .show-group elements and #status still reading "Choose a playlist
+        # to begin." The tests survived on Playwright's auto-waiting; the ones that read text
+        # synchronously were racing a local fetch. This is the trap docs/development.md §7 names.
+        page.wait_for_selector(".show-group, .empty")
         return page
 
     return _open

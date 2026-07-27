@@ -108,7 +108,12 @@ with *local* access would see real symlinks; that case is untested.
    hardlink to the same inode or a symlink resolving to the source, so a tree may hold both and
    changing mode causes no churn; it rejects a stale inode (original replaced in place), a dangling
    symlink, and a plain copy left at that path, so those get repaired instead of trusted forever.
-   Each input is applied independently — one failure never aborts the scans, removes or sweep.
+   Every unit is isolated — each input, each library's scan, each unlink — so no single failure
+   aborts the rest, the scans, the removes or the sweep. The scan is explicitly **best-effort**:
+   Folder Watch is the mechanism (§3) and `scan-files` only makes pickup immediate, so a Tdarr
+   failure is logged and reported but never blocks retirement. It still counts as a failure for the
+   exit code, because whether it is harmless depends on Folder Watch being enabled — which the glue
+   cannot see.
 4. **Remove input** (unless incomplete) = present − desired → delete that input. Deleting a hardlink
    drops one name for the inode and deleting a symlink drops the link; either way the original is
    untouched. (Verified for symlinks over SMB too: Samba unlinks the link, not the target.)
@@ -137,6 +142,8 @@ detection, no Tdarr status polling, no glue state — the filesystem + Jellyfin 
 | Neither hardlink nor symlink works (CIFS/SMB mount) | Hard error at startup — run the glue where the filesystem is local. |
 | Input broken after creation (stale inode, dangling link, `moveonenospc` copy) | `is_current` rejects it → re-added and replaced next cycle. |
 | One input fails to create | Logged, reported, non-zero exit; the other adds, the scans, the removes and the sweep all still run. |
+| Tdarr `scan-files` fails for a library | Best-effort: logged as a warning, reported (non-zero exit), and the other libraries' scans, the removes and the sweep all still run. Folder Watch picks the inputs up within ~30s. |
+| One input cannot be unlinked (EACCES, stale mount) | Logged, reported, non-zero exit; the remaining removes and the whole sweep still run. Previously escaped as a bare `OSError` and took every remaining target with it. |
 | Flow deletes its input (misconfig) | Re-transcode loop — a hard requirement violated; documented + doctor reminder. Originals are safe either way. |
 | Tdarr unreachable | New submissions stall, retried next cycle; existing files untouched. |
 | Restart mid-encode | Stateless: input present → no re-add; sweep keys on the playlist. No double-submit, no DB. |
@@ -209,6 +216,9 @@ process, so an autouse fixture resets it — otherwise suite order would fix the
   `arrayOrPath` (the API's documented single-file form: *"scanFolderWatcher requires an array of file
   paths"*). Pickup is guaranteed by the library's **Folder Watch** poll (see §3); the API call just
   makes it immediate. (Not auto-probed — the earlier "doctor probes scan_mode" was never real.)
+  **It answers `200 text/plain` with the body `OK`**, not JSON, while `/api/v2/cruddb` on the same
+  server answers `application/json` — so the client tolerates a non-JSON 200 and only this endpoint
+  was ever affected. Observed live on the deployment host; see `plans/tdarr-scan-files-blocks-sweep.md`.
 - **Tdarr auth** — token login (`/public/auth/login` → Bearer) or auth-disabled; `doctor` reports.
 - **Library topology** — one library watching both segment folders vs one per segment; `doctor`
   reports what each configured `library_id` watches.
