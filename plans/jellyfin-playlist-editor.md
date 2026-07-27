@@ -1,3 +1,8 @@
+> **Superseded — historical record.** This plan predates the Bootstrap rewrite and describes a Pico
+> CSS UI, a `⤒` glyph button and a `pico.min.css` asset that no longer exist. Kept for provenance;
+> for current design see [docs/playlist-editor.md](../docs/playlist-editor.md), and for how to work
+> on the project see [docs/development.md](../docs/development.md).
+
 # Playlist editor web UI
 
 > **First step on approval:** copy this file to `plans/jellyfin-playlist-editor.md` in the repo,

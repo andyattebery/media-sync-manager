@@ -33,7 +33,7 @@ Small Python package: one long-lived poller plus a CLI. Plain blocking loop.
 
 ```
 media-sync-manager/
-  pyproject.toml          # setuptools; deps: requests, pyyaml; [test]: pytest, responses
+  pyproject.toml          # setuptools; deps: requests, pyyaml; extras: [web] [test] [e2e]
   Dockerfile              # python:3.12-slim; ENTRYPOINT python -m media_sync_manager
   docker-compose.yml      # primary deployment (bind-mount /mnt/storage:/media, run where it is local)
   config.example.yaml
@@ -176,29 +176,21 @@ so Jellyfin never scans `/media/Transcode Videos`.
 
 ## 8. Deployment (Docker-first)
 
-```dockerfile
-FROM python:3.12-slim
-COPY . /src
-RUN pip install --no-cache-dir /src && rm -rf /src
-ENTRYPOINT ["python", "-m", "media_sync_manager"]
-CMD ["run", "--config", "/etc/media-sync-manager/config.yaml"]
-```
+One image, two compose services: the poller (`run`, the container default) and the playlist editor
+(`web`, port 8087). The authoritative versions are [`Dockerfile`](../Dockerfile) and
+[`docker-compose.yml`](../docker-compose.yml) — read those rather than a copy here, which is how this
+section came to describe a build without the `[web]` extra and a single service.
 
-```yaml
-services:
-  media-sync-manager:
-    build: .
-    image: ghcr.io/andyattebery/media-sync-manager:latest
-    restart: unless-stopped
-    environment: [JELLYFIN_API_KEY, TDARR_USER, TDARR_PASS]   # compose forwards no host env implicitly
-    volumes:
-      - /etc/media-sync-manager/config.yaml:/etc/media-sync-manager/config.yaml:ro
-      - /mnt/storage:/media        # same mount as Jellyfin/Tdarr; must be LOCAL on this host
-```
+Both services need `JELLYFIN_API_KEY`, `TDARR_USER` and `TDARR_PASS`: compose forwards no host env
+implicitly, and `config.load()` expands the whole document before any command runs, so a missing
+`${VAR}` is a startup failure even for a command that never uses it. The poller bind-mounts the media
+tree; the editor deliberately does not.
 
 One-shot commands: `docker compose run --rm media-sync-manager sync --once` / `... doctor`.
-**CI** (`.github/workflows/ci.yaml`): `pytest tests/ -v` on push/PR; multi-arch image to GHCR on
-semver tags.
+
+**CI** (`.github/workflows/ci.yaml`) — three jobs: `test` (`pytest tests/ -v`) and `e2e`
+(`playwright install chromium`, then `pytest -m e2e -v`) on push/PR, and `docker`, which publishes a
+multi-arch GHCR image on semver tags and only moves `:latest` for a version with no `-` suffix.
 
 ## 9. Tests
 

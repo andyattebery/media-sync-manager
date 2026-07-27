@@ -121,9 +121,12 @@ Notes worth knowing:
 
 ## Development
 
+See [the development guide](docs/development.md) for the full workflow — running the UI against
+fixture data with no credentials, the test layers, mutation testing, and debugging browser tests.
+
 ```sh
 pip install -e ".[web,test]"
-pytest                       # 132 tests, no browser
+pytest                       # 148 tests, no browser
 
 # browser tests for the editor UI (opt-in: ~150MB of browser binaries)
 pip install -e ".[e2e]"

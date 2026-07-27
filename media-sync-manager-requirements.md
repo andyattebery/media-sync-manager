@@ -1,3 +1,6 @@
+> **Superseded — historical record.** The original handoff brief, kept for provenance. Current
+> design lives in [docs/](docs/); how to work on the project is [docs/development.md](docs/development.md).
+
 # media-sync-manager — Requirements (handoff for Claude Code)
 
 You have access to the Jellyfin and Tdarr APIs and can explore them directly. This document is
